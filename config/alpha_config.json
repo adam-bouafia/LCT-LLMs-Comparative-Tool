@@ -1,0 +1,16 @@
+{
+  "name": "alpha",
+  "models": [
+    "distilbert/distilgpt2"
+  ],
+  "prompts": [
+    "Hello, how are you?"
+  ],
+  "algorithms": [
+    "response_time"
+  ],
+  "repetitions": 1,
+  "max_length": 50,
+  "temperature": 0.7,
+  "energy_profiler": "codecarbon"
+}

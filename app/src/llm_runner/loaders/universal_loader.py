@@ -1,0 +1,872 @@
+"""Universal Model Loader Module
+
+This module provides functionality to load, manage, and interact with
+various Hugging Face models in a memory-efficient way.
+"""
+
+import logging
+import gc
+import os
+import time
+import threading
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass
+import psutil
+import torch
+from transformers import (
+    AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM,
+    AutoConfig, pipeline, Pipeline
+)
+from transformers.utils import is_torch_available
+
+try:
+    from ...core.data_manager import get_data_manager
+    DATA_MANAGER_AVAILABLE = True
+except ImportError:
+    DATA_MANAGER_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class ModelLoadConfig:
+    device: str = "auto"
+    torch_dtype: Optional[str] = None
+    trust_remote_code: bool = False
+    use_cache: bool = True
+    max_memory_per_model_gb: Optional[float] = None
+    offload_folder: Optional[str] = None
+    low_cpu_mem_usage: bool = True
+
+@dataclass 
+class LoadedModel:
+    """Container for a loaded model with metadata."""
+    id: str
+    model: Any
+    tokenizer: Any
+    pipeline_obj: Optional[Pipeline] = None
+    metadata: Optional[Any] = None
+    device: str = "cpu"
+    memory_usage_mb: float = 0.0
+    load_time_seconds: float = 0.0
+    last_used: float = 0.0
+    lock: threading.Lock = None
+
+    def __post_init__(self):
+        if self.lock is None:
+            self.lock = threading.Lock()
+        if self.last_used == 0.0:
+            self.last_used = time.time()
+
+
+class ModelMemoryManager:
+    """Manages model memory usage and automatic unloading."""
+    
+    def __init__(self, max_total_memory_gb: float = 8.0):
+        self.max_total_memory_gb = max_total_memory_gb
+        self.loaded_models: Dict[str, LoadedModel] = {}
+        self.memory_lock = threading.Lock()
+    
+    def get_current_memory_usage_gb(self) -> float:
+        """Get current total memory usage in GB."""
+        total_mb = sum(model.memory_usage_mb for model in self.loaded_models.values())
+        return total_mb / 1024
+    
+    def can_load_model(self, estimated_size_gb: float) -> bool:
+        """Check if we can load a model of given size."""
+        current_usage = self.get_current_memory_usage_gb()
+        
+        # Check system memory
+        memory_info = psutil.virtual_memory()
+        available_system_memory = memory_info.available / (1024**3)  # GB
+        
+        return (
+            current_usage + estimated_size_gb <= self.max_total_memory_gb and
+            estimated_size_gb <= available_system_memory * 0.8  # Leave 20% buffer
+        )
+    
+    def free_memory_for_model(self, required_gb: float) -> bool:
+        """Free memory by unloading least recently used models."""
+        with self.memory_lock:
+            current_usage = self.get_current_memory_usage_gb()
+            
+            if current_usage + required_gb <= self.max_total_memory_gb:
+                return True
+            
+            # Sort by last used time (oldest first)
+            models_by_usage = sorted(
+                self.loaded_models.items(),
+                key=lambda x: x[1].last_used
+            )
+            
+            freed_memory = 0.0
+            for model_id, loaded_model in models_by_usage:
+                if current_usage - freed_memory + required_gb <= self.max_total_memory_gb:
+                    break
+                
+                logger.info(f"Unloading model {model_id} to free memory")
+                freed_memory += loaded_model.memory_usage_mb / 1024
+                self._unload_model(model_id)
+            
+            return self.get_current_memory_usage_gb() + required_gb <= self.max_total_memory_gb
+    
+    def _unload_model(self, model_id: str):
+        """Unload a specific model from memory."""
+        if model_id in self.loaded_models:
+            loaded_model = self.loaded_models[model_id]
+            with loaded_model.lock:
+                # Clean up the model
+                if hasattr(loaded_model.model, 'to'):
+                    loaded_model.model.to('cpu')
+                del loaded_model.model
+                del loaded_model.tokenizer
+                if loaded_model.pipeline_obj:
+                    del loaded_model.pipeline_obj
+                
+                # Remove from tracking
+                del self.loaded_models[model_id]
+                
+                # Force garbage collection
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+class UniversalModelLoader:
+    """Universal loader for Hugging Face models with memory management."""
+    
+    def __init__(self, config: ModelLoadConfig = ModelLoadConfig(), max_memory_gb: float = 8.0, discovery=None):
+        """Initialize the model loader.
+        
+        Args:
+            config: Model loading configuration
+            max_memory_gb: Maximum total memory for loaded models
+            discovery: Optional discovery service for automatic model reloading
+        """
+        self.config = config
+        self.memory_manager = ModelMemoryManager(max_memory_gb)
+        self.device = self._determine_device()
+        self.discovery = discovery
+        
+        # Initialize data manager for organized downloads
+        if DATA_MANAGER_AVAILABLE:
+            self.data_manager = get_data_manager()
+        else:
+            self.data_manager = None
+            
+        logger.info(f"Initialized UniversalModelLoader with device: {self.device}")
+        if self.data_manager:
+            logger.info(f"Using organized data cache: {self.data_manager.data_root}")
+    
+    def load_model_by_id(self, model_id: str, force_reload: bool = False) -> Optional[LoadedModel]:
+        """Load a model by ID string (convenience method).
+        
+        Args:
+            model_id: HuggingFace model ID
+            force_reload: Force reload even if already loaded
+            
+        Returns:
+            LoadedModel object or None if loading failed
+        """
+        # Create a simple metadata object
+        class SimpleMetadata:
+            def __init__(self, model_id):
+                self.id = model_id
+                self.model_id = model_id
+                self.size_gb = 2.0  # Default estimate
+                self.pipeline_tag = None
+                self.task = None
+        
+        metadata = SimpleMetadata(model_id)
+        return self.load_model(metadata, force_reload)
+    
+    def _determine_device(self) -> str:
+        """Determine the best device for model loading."""
+        if self.config.device != "auto":
+            return self.config.device
+        
+        if torch.cuda.is_available():
+            return "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
+        
+    def load_model(self, metadata, force_reload: bool = False) -> Optional[LoadedModel]:
+        """Load a model with automatic memory management.
+        
+        Args:
+            metadata: Model metadata with ID and other info
+            force_reload: Force reload even if already loaded
+            
+        Returns:
+            LoadedModel object or None if loading failed
+        """
+        # Resolve model aliases before any operations
+        original_model_id = getattr(metadata, 'id', 'unknown')
+        resolved_model_id = self._resolve_model_alias(original_model_id)
+        
+        # Update metadata with resolved ID if different
+        if resolved_model_id != original_model_id:
+            logger.info(f"Model alias resolved: {original_model_id} → {resolved_model_id}")
+            # Update metadata object
+            if hasattr(metadata, 'id'):
+                metadata.id = resolved_model_id
+            if hasattr(metadata, 'model_id'):
+                metadata.model_id = resolved_model_id
+        
+        model_id = resolved_model_id
+        
+        # Check for both original and resolved model IDs in cache
+        cache_keys_to_check = [model_id]
+        if resolved_model_id != original_model_id:
+            cache_keys_to_check.append(original_model_id)
+        
+        # Return existing model if already loaded and not forcing reload
+        if not force_reload:
+            for cache_key in cache_keys_to_check:
+                if cache_key in self.memory_manager.loaded_models:
+                    loaded_model = self.memory_manager.loaded_models[cache_key]
+                    loaded_model.last_used = time.time()
+                    logger.debug(f"Using cached model: {cache_key} (requested: {original_model_id})")
+                    
+                    # Cache under both keys for future lookups
+                    if resolved_model_id != original_model_id:
+                        self.memory_manager.loaded_models[original_model_id] = loaded_model
+                        self.memory_manager.loaded_models[resolved_model_id] = loaded_model
+                    
+                    return loaded_model
+        
+        # Check if we have enough memory
+        estimated_size = getattr(metadata, 'size_gb', 2.0) or 2.0
+        if not self.memory_manager.can_load_model(estimated_size):
+            if not self.memory_manager.free_memory_for_model(estimated_size):
+                logger.error(f"Cannot load model {model_id}: insufficient memory")
+                return None
+        
+        logger.info(f"Loading model: {model_id}")
+        print(f"\n 📥 DOWNLOADING/LOADING MODEL: {model_id}")
+        print(f"   🔍 Checking cache and downloading if needed...")
+        start_time = time.time()
+        
+        try:
+            # Determine cache directory
+            cache_dir = None
+            if self.data_manager:
+                cache_dir = str(self.data_manager.get_model_cache_dir(model_id))
+                print(f"   � Using organized cache: {cache_dir}")
+            
+            # Load tokenizer
+            print(f"   📝 Loading tokenizer...")
+            tokenizer_kwargs = {
+                'trust_remote_code': self.config.trust_remote_code,
+                'use_fast': True if is_torch_available() else False
+            }
+            if cache_dir:
+                tokenizer_kwargs['cache_dir'] = cache_dir
+            
+            # Add HuggingFace token for gated/private models
+            hf_token = os.getenv('HF_TOKEN') or os.getenv('HUGGINGFACE_HUB_TOKEN')
+            if hf_token:
+                tokenizer_kwargs['token'] = hf_token
+                print(f"   🔐 Using HuggingFace authentication for gated models")
+                
+            tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
+            print(f"   ✅ Tokenizer loaded (vocab size: {tokenizer.vocab_size})")
+            
+            # Determine model class with fallback
+            model_class = self._get_model_class(metadata)
+            print(f"   🏗️  Trying model class: {model_class.__name__}")
+            
+            # Set up loading parameters
+            model_kwargs = {
+                'trust_remote_code': self.config.trust_remote_code,
+                'low_cpu_mem_usage': self.config.low_cpu_mem_usage,
+                'use_cache': self.config.use_cache
+            }
+            
+            # Add cache directory if available
+            if cache_dir:
+                model_kwargs['cache_dir'] = cache_dir
+            
+            # Add HuggingFace token for gated/private models
+            if hf_token:
+                model_kwargs['token'] = hf_token
+            
+            # Handle torch_dtype
+            if self.config.torch_dtype and self.config.torch_dtype != "auto":
+                torch_dtype = getattr(torch, self.config.torch_dtype)
+                model_kwargs['torch_dtype'] = torch_dtype
+                print(f"   🎯 Torch dtype: {self.config.torch_dtype}")
+            else:
+                print(f"   🎯 Torch dtype: auto")
+            
+            # Load model with fallback
+            model = None
+            print(f"   📦 Loading model weights (this may take a while for first download)...")
+            
+            try:
+                model = model_class.from_pretrained(model_id, **model_kwargs)
+                print(f"   ✅ Model weights loaded successfully with {model_class.__name__}!")
+            except Exception as e:
+                print(f"   ⚠️  Failed with {model_class.__name__}: {e}")
+                # Try alternative model class
+                alternative_class = AutoModelForCausalLM if model_class == AutoModelForSeq2SeqLM else AutoModelForSeq2SeqLM
+                print(f"   🔄 Trying fallback: {alternative_class.__name__}")
+                try:
+                    model = alternative_class.from_pretrained(model_id, **model_kwargs)
+                    print(f"   ✅ Model weights loaded successfully with {alternative_class.__name__}!")
+                    model_class = alternative_class  # Update for pipeline creation
+                except Exception as e2:
+                    print(f"   ❌ Both model classes failed!")
+                    print(f"      - {model_class.__name__}: {e}")
+                    print(f"      - {alternative_class.__name__}: {e2}")
+                    raise RuntimeError(f"Failed to load {model_id} with either model class")
+            
+            # Move to device
+            print(f"   🚚 Moving model to device: {self.device}")
+            model = model.to(self.device)
+            
+            # Set up pipeline if possible
+            pipeline_obj = None
+            try:
+                print(f"   🔗 Setting up inference pipeline...")
+                pipeline_task = self._get_pipeline_task(metadata)
+                if pipeline_task:
+                    pipeline_obj = pipeline(
+                        pipeline_task,
+                        model=model,
+                        tokenizer=tokenizer,
+                        device=0 if self.device == "cuda" else -1,
+                        trust_remote_code=self.config.trust_remote_code
+                    )
+                    print(f"   ✅ Pipeline created for task: {pipeline_task}")
+            except Exception as e:
+                logger.warning(f"Could not create pipeline for {model_id}: {e}")
+                print(f"   ⚠️  Pipeline creation failed, will use model directly")
+            
+            # Calculate memory usage
+            print(f"   📊 Calculating memory usage...")
+            memory_usage_mb = self._calculate_memory_usage(model)
+            load_time = time.time() - start_time
+            print(f"   ✅ Model loaded in {load_time:.2f}s, using {memory_usage_mb:.1f}MB")
+            
+            # Create loaded model object
+            loaded_model = LoadedModel(
+                id=model_id,
+                model=model,
+                tokenizer=tokenizer,
+                pipeline_obj=pipeline_obj,
+                metadata=metadata,
+                device=self.device,
+                memory_usage_mb=memory_usage_mb,
+                load_time_seconds=load_time,
+                last_used=time.time(),
+                lock=threading.Lock()
+            )
+            
+            # Register with memory manager
+            self.memory_manager.loaded_models[model_id] = loaded_model
+            
+            # Also cache under original alias if different (for future lookups)
+            if resolved_model_id != original_model_id:
+                self.memory_manager.loaded_models[original_model_id] = loaded_model
+                logger.debug(f"Model cached under both IDs: {original_model_id} and {model_id}")
+            
+            logger.info(f"Successfully loaded model {model_id}")
+            return loaded_model
+            
+        except Exception as e:
+            logger.error(f"Failed to load model {model_id}: {e}")
+            print(f"   ❌ Failed to load model: {e}")
+            return None
+    
+    def _resolve_model_alias(self, model_id: str) -> str:
+        """Resolve model ID aliases to actual model IDs.
+        
+        Args:
+            model_id: Original model ID that might be an alias
+            
+        Returns:
+            Actual model ID that should be used for loading
+        """
+        # Common model aliases mapping
+        model_aliases = {
+            # GPT-2 family
+            'gpt2': 'openai-community/gpt2',
+            'gpt2-medium': 'openai-community/gpt2-medium',
+            'gpt2-large': 'openai-community/gpt2-large',
+            'gpt2-xl': 'openai-community/gpt2-xl',
+            
+            # DistilGPT2
+            'distilgpt2': 'distilbert/distilgpt2',
+            
+            # Conversational models
+            'blenderbot': 'facebook/blenderbot-400M-distill',
+            'blenderbot-small': 'facebook/blenderbot-90M',
+            'dialogpt': 'microsoft/DialoGPT-medium',
+            'dialogpt-small': 'microsoft/DialoGPT-small',
+            'dialogpt-large': 'microsoft/DialoGPT-large',
+            
+            # BERT family
+            'bert-base': 'bert-base-uncased',
+            'bert-large': 'bert-large-uncased',
+            'distilbert': 'distilbert-base-uncased',
+            
+            # T5 family
+            't5-small': 'google-t5/t5-small',
+            't5-base': 'google-t5/t5-base',
+            't5-large': 'google-t5/t5-large',
+        }
+        
+        # Check if it's a known alias
+        resolved_id = model_aliases.get(model_id, model_id)
+        
+        if resolved_id != model_id:
+            logger.debug(f"Resolved model alias: {model_id} → {resolved_id}")
+        
+        return resolved_id
+        return model_id
+    
+    def generate_text(self, model_id: str, prompt: str, **kwargs) -> Optional[str]:
+        """Generate text using a loaded model with auto-reload capability.
+        
+        Args:
+            model_id: ID of the model to use (e.g., 'gpt2', 'distilbert/distilgpt2')
+            prompt: Input prompt
+            **kwargs: Additional generation parameters
+            
+        Returns:
+            Generated text or None if failed
+        """
+        # Check if model is loaded, if not try to reload it automatically
+        # Also check for common aliases (gpt2 -> openai-community/gpt2)
+        actual_model_id = self._resolve_model_alias(model_id)
+        
+        # Try to find the model using either the original ID or the resolved alias
+        loaded_model = None
+        if model_id in self.memory_manager.loaded_models:
+            loaded_model = self.memory_manager.loaded_models[model_id]
+        elif actual_model_id in self.memory_manager.loaded_models:
+            loaded_model = self.memory_manager.loaded_models[actual_model_id]
+            # Cache the alias for future use
+            self.memory_manager.loaded_models[model_id] = loaded_model
+        
+        if loaded_model is None:
+            logger.debug(f"Model {model_id} not loaded, attempting to reload...")
+            
+            # Try to reload the model using discovery service
+            if self.discovery:
+                try:
+                    model_metadata = self.discovery.get_model_info(actual_model_id) or self.discovery.get_model_info(model_id)
+                    if model_metadata:
+                        logger.info(f"Reloading model {model_id} automatically")
+                        # Load the model
+                        loaded_model = self.load_model(model_metadata)
+                        if loaded_model:
+                            # Store the loaded model under both the original request ID and the actual model ID
+                            self.memory_manager.loaded_models[model_id] = loaded_model
+                            if actual_model_id != model_id:
+                                self.memory_manager.loaded_models[actual_model_id] = loaded_model
+                                logger.debug(f"Model aliasing: {model_id} -> {actual_model_id}")
+                        else:
+                            logger.error(f"Failed to reload model {model_id}")
+                            return None
+                    else:
+                        logger.error(f"Could not find metadata for model {model_id}")
+                        return None
+                except Exception as e:
+                    logger.error(f"Error reloading model {model_id}: {e}")
+                    return None
+            else:
+                logger.error(f"Model {model_id} not loaded and no discovery service available for reloading")
+                return None
+
+        print(f"\n🤖 GENERATING RESPONSE...")
+        print(f"   📝 Prompt: '{prompt}'")
+        print(f"   ⚙️  Generation parameters: {kwargs}")
+        
+        # Use the loaded_model we found or loaded above
+        if loaded_model is None:
+            logger.error(f"Model {model_id} is not available")
+            return None
+            
+        loaded_model.last_used = time.time()
+        
+        generation_start = time.time()
+        
+        with loaded_model.lock:
+            try:
+                if loaded_model.pipeline_obj:
+                    # Use pipeline if available
+                    print(f"   🔧 Using inference pipeline")
+                    pipeline_kwargs = kwargs.copy()
+                    
+                    # Handle parameter conflicts
+                    if 'max_length' in pipeline_kwargs:
+                        pipeline_kwargs.pop('max_new_tokens', None)
+                    
+                    # Remove non-generation parameters that shouldn't be passed to the model
+                    non_generation_params = ['cache_dir', 'device', 'trust_remote_code', 'torch_dtype', 'low_cpu_mem_usage']
+                    for param in non_generation_params:
+                        pipeline_kwargs.pop(param, None)
+                    
+                    # Fix model-specific compatibility issues
+                    print(f"   🔧 Checking model compatibility for: {loaded_model.id}")
+                    if 'blenderbot' in loaded_model.id.lower() or 'facebook/blenderbot' in loaded_model.id.lower():
+                        print(f"   🤖 Applying BlenderBot-specific fixes")
+                        pipeline_kwargs['use_cache'] = False  # Disable cache to avoid index errors
+                        pipeline_kwargs['min_length'] = 1    # Set reasonable min_length
+                    
+                    # Handle max_length vs max_new_tokens parameter conflicts
+                    if 'max_length' in pipeline_kwargs and 'max_new_tokens' in pipeline_kwargs:
+                        # Prefer max_new_tokens for better control
+                        pipeline_kwargs.pop('max_length', None)
+                    
+                    # Fix model-specific parameters
+                    if 'pad_token_id' in pipeline_kwargs:
+                        # Don't use hardcoded pad_token_id for seq2seq models
+                        if any(seq2seq_name in loaded_model.id.lower() for seq2seq_name in ['blenderbot', 't5', 'bart', 'pegasus']):
+                            print(f"   🔧 Removing hardcoded pad_token_id for seq2seq model")
+                            pipeline_kwargs.pop('pad_token_id', None)
+                        # Use model's tokenizer's pad_token_id instead of hardcoded values
+                        elif hasattr(loaded_model, 'tokenizer') and loaded_model.tokenizer:
+                            if hasattr(loaded_model.tokenizer, 'pad_token_id') and loaded_model.tokenizer.pad_token_id is not None:
+                                pipeline_kwargs['pad_token_id'] = loaded_model.tokenizer.pad_token_id
+                            elif hasattr(loaded_model.tokenizer, 'eos_token_id') and loaded_model.tokenizer.eos_token_id is not None:
+                                pipeline_kwargs['pad_token_id'] = loaded_model.tokenizer.eos_token_id
+                            else:
+                                # Remove pad_token_id if tokenizer doesn't have one
+                                pipeline_kwargs.pop('pad_token_id', None)
+                        else:
+                            # Remove pad_token_id if no tokenizer available
+                            pipeline_kwargs.pop('pad_token_id', None)
+                    
+                    print(f"   ⏳ Running inference...")
+                    try:
+                        result = loaded_model.pipeline_obj(prompt, **pipeline_kwargs)
+                        print(f"   🔍 Pipeline result type: {type(result)}")
+                        
+                        # Handle different pipeline return formats
+                        if isinstance(result, list):
+                            if len(result) > 0:
+                                print(f"   🔍 List result with {len(result)} items, first item type: {type(result[0])}")
+                                # For causal LM (text-generation): [{'generated_text': 'full text including prompt'}]
+                                # For seq2seq (text2text-generation): [{'generated_text': 'generated text only'}]
+                                first_result = result[0]
+                                if isinstance(first_result, dict):
+                                    print(f"   🔍 Dict keys: {list(first_result.keys())}")
+                                    response = first_result.get('generated_text', '')
+                                else:
+                                    response = str(first_result)
+                            else:
+                                print(f"   ⚠️ Empty result list from pipeline")
+                                response = ""
+                        elif isinstance(result, str):
+                            response = result
+                        elif hasattr(result, 'generated_text'):
+                            response = result.generated_text
+                        else:
+                            print(f"   ⚠️ Unexpected result format: {type(result)}, content: {result}")
+                            response = str(result)
+                    except Exception as e:
+                        print(f"   ❌ Pipeline execution failed: {e}")
+                        print(f"   🔍 Pipeline kwargs: {pipeline_kwargs}")
+                        raise
+                        
+                else:
+                    # Use model and tokenizer directly
+                    print(f"   🔧 Using model and tokenizer directly")
+                    tokenizer = loaded_model.tokenizer
+                    model = loaded_model.model
+                    
+                    # Tokenize input
+                    inputs = tokenizer.encode(prompt, return_tensors="pt").to(self.device)
+                    
+                    # Generate
+                    generation_kwargs = kwargs.copy()
+                    generation_kwargs.pop('max_new_tokens', None)
+                    
+                    print(f"   ⏳ Running inference...")
+                    with torch.no_grad():
+                        outputs = model.generate(
+                            inputs,
+                            pad_token_id=tokenizer.eos_token_id,
+                            **generation_kwargs
+                        )
+                    
+                    # Decode output
+                    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                
+                generation_time = time.time() - generation_start
+                print(f"   ✅ Response generated in {generation_time:.2f}s")
+                print(f"   📄 Response: '{response[:100]}{'...' if len(response) > 100 else ''}'")
+                
+                return response
+                
+            except Exception as e:
+                logger.error(f"Generation failed for model {model_id}: {e}")
+                print(f"   ❌ Generation failed: {e}")
+                return None
+    
+    def unload_model(self, model_id: str) -> bool:
+        """Manually unload a specific model."""
+        try:
+            self.memory_manager._unload_model(model_id)
+            logger.info(f"Unloaded model: {model_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to unload model {model_id}: {e}")
+            return False
+    
+    def get_loaded_models(self) -> Dict[str, LoadedModel]:
+        """Get dictionary of currently loaded models."""
+        return self.memory_manager.loaded_models.copy()
+    
+    def get_memory_stats(self) -> Dict:
+        """Get memory statistics for all loaded models.
+        
+        Returns:
+            Dict with format:
+            {
+                "loaded_models": {
+                    "model_id": {
+                        "memory_mb": float,
+                        "memory_gb": float,
+                        "last_used": str
+                    }
+                },
+                "total_memory_mb": float,
+                "total_memory_gb": float,
+                "available_memory_gb": float
+            }
+        """
+        loaded_models_stats = {}
+        total_memory_mb = 0.0
+        
+        for model_id, loaded_model in self.memory_manager.loaded_models.items():
+            try:
+                # Calculate memory usage for this model
+                if hasattr(loaded_model, 'model') and loaded_model.model:
+                    memory_mb = self._calculate_memory_usage(loaded_model.model)
+                elif hasattr(loaded_model, 'pipeline') and loaded_model.pipeline:
+                    memory_mb = self._calculate_memory_usage(loaded_model.pipeline.model)
+                else:
+                    memory_mb = 0.0
+                
+                loaded_models_stats[model_id] = {
+                    "memory_mb": memory_mb,
+                    "memory_gb": memory_mb / 1024,
+                    "last_used": str(loaded_model.last_used) if hasattr(loaded_model, 'last_used') else "unknown"
+                }
+                total_memory_mb += memory_mb
+                
+            except Exception as e:
+                logger.warning(f"Failed to calculate memory for model {model_id}: {e}")
+                loaded_models_stats[model_id] = {
+                    "memory_mb": 0.0,
+                    "memory_gb": 0.0,
+                    "last_used": "unknown"
+                }
+        
+        return {
+            "loaded_models": loaded_models_stats,
+            "total_memory_mb": total_memory_mb,
+            "total_memory_gb": total_memory_mb / 1024,
+            "available_memory_gb": max(0, self.memory_manager.max_total_memory_gb - (total_memory_mb / 1024))
+        }
+    
+    def _get_model_class(self, metadata):
+        """Determine the appropriate model class based on metadata with comprehensive detection."""
+        task = getattr(metadata, 'pipeline_tag', None) or getattr(metadata, 'task', None)
+        model_id = getattr(metadata, 'model_id', None) or getattr(metadata, 'id', None)
+        
+        # Comprehensive model ID patterns for seq2seq models
+        seq2seq_patterns = [
+            # T5 family
+            't5', 'flan-t5', 'ul2', 'mt5', 'byt5', 'codet5',
+            # BART family  
+            'bart', 'mbart', 'plbart',
+            # Pegasus family
+            'pegasus', 'bigbird_pegasus',
+            # Marian translation models
+            'marian', 'opus-mt',
+            # Other encoder-decoder models
+            'led', 'longformer-encoder-decoder', 'blenderbot',
+            'prophetnet', 'fsmt', 'encoder-decoder', 'godel', 'seq2seq'
+        ]
+        
+        # Comprehensive model ID patterns for causal LM models
+        causal_patterns = [
+            # GPT family
+            'gpt', 'gpt2', 'gpt-2', 'distilgpt', 'dialogpt', 'gpt-neo', 'gpt-j', 'gpt4all',
+            # LLaMA family (Meta AI)
+            'llama', 'llama-2', 'llama2', 'code-llama', 'codellama', 'alpaca', 'vicuna', 'wizard', 'orca',
+            # Mistral AI models
+            'mistral', 'mixtral',
+            # Google models
+            'gemma', 'gemma-7b', 'gemma-2b',
+            # Alibaba Qwen models  
+            'qwen', 'qwen2', 'qwen-7b', 'qwen2-7b',
+            # Microsoft models
+            'phi', 'phi-2', 'phi-3', 'phi3',
+            # Other popular models
+            'bloom', 'opt', 'codegen', 'starcoder', 'santacoder',
+            'falcon', 'mpt', 'dolly', 'stablelm', 'redpajama',
+            # 01-ai models
+            'yi', 'yi-6b', 'yi-34b',
+            # Code-specific models
+            'incoder', 'codet5p',
+            # Chat/instruct models
+            'chat', 'instruct', 'tulu', 'oasst'
+        ]
+        
+        # Check model ID patterns first (most reliable)
+        if model_id:
+            model_lower = model_id.lower()
+            
+            # Check for seq2seq patterns
+            for pattern in seq2seq_patterns:
+                if pattern in model_lower:
+                    print(f"   🔍 Detected seq2seq model (pattern: {pattern})")
+                    return AutoModelForSeq2SeqLM
+            
+            # Check for causal LM patterns  
+            for pattern in causal_patterns:
+                if pattern in model_lower:
+                    print(f"   🔍 Detected causal LM model (pattern: {pattern})")
+                    return AutoModelForCausalLM
+        
+        # Check pipeline task
+        if task == "text2text-generation":
+            print("   🔍 Detected seq2seq model (task: text2text-generation)")
+            return AutoModelForSeq2SeqLM
+        elif task in ["text-generation", "conversational"]:
+            print("   🔍 Detected causal LM model (task: text-generation)")
+            return AutoModelForCausalLM
+        
+        # Try to detect from model configuration
+        try:
+            from transformers import AutoConfig
+            config = AutoConfig.from_pretrained(model_id or "", trust_remote_code=False)
+            
+            # Check architecture names
+            architectures = getattr(config, 'architectures', [])
+            if architectures:
+                arch_name = architectures[0] if isinstance(architectures, list) else str(architectures)
+                arch_lower = arch_name.lower()
+                
+                # Seq2seq architectures
+                seq2seq_archs = [
+                    't5', 'bart', 'pegasus', 'mbart', 'plbart', 'bigbird_pegasus',
+                    'led', 'marian', 'blenderbot', 'prophetnet', 'fsmt'
+                ]
+                
+                # Causal LM architectures  
+                causal_archs = [
+                    'llama', 'mistral', 'gemma', 'qwen', 'gpt', 'gptneo', 'gptj', 
+                    'opt', 'bloom', 'falcon', 'phi', 'yi'
+                ]
+                
+                for arch in seq2seq_archs:
+                    if arch in arch_lower:
+                        print(f"   🔍 Detected seq2seq model (architecture: {arch_name})")
+                        return AutoModelForSeq2SeqLM
+                
+                # Check causal LM architectures
+                for arch in causal_archs:
+                    if arch in arch_lower:
+                        print(f"   🔍 Detected causal LM model (architecture: {arch_name})")
+                        return AutoModelForCausalLM
+            
+            # Check model type
+            model_type = getattr(config, 'model_type', '')
+            if model_type:
+                seq2seq_types = [
+                    't5', 'mt5', 'ul2', 'bart', 'mbart', 'pegasus', 'bigbird_pegasus',
+                    'led', 'marian', 'blenderbot', 'prophetnet'
+                ]
+                
+                causal_types = [
+                    'llama', 'mistral', 'gemma', 'qwen', 'qwen2', 'gpt2', 'gpt_neo', 'gptj',
+                    'opt', 'bloom', 'falcon', 'RefinedWebModel', 'phi', 'phi3', 'yi'  
+                ]
+                
+                if model_type in seq2seq_types:
+                    print(f"   🔍 Detected seq2seq model (model_type: {model_type})")
+                    return AutoModelForSeq2SeqLM
+                elif model_type in causal_types:
+                    print(f"   🔍 Detected causal LM model (model_type: {model_type})")
+                    return AutoModelForCausalLM
+                else:
+                    # Unknown model type - try seq2seq first as it's more specific
+                    print(f"   🔍 Unknown model type '{model_type}' - trying seq2seq first")
+                    return AutoModelForSeq2SeqLM
+                    
+        except Exception as e:
+            print(f"   ⚠️  Could not load config for detection: {e}")
+        
+        # Smart default: Try seq2seq first for unknown models
+        # (Most failures happen when trying causal LM on seq2seq models)
+        print("   🔍 Unknown model type - will try both classes with fallback")
+        return AutoModelForSeq2SeqLM
+    
+    def _get_pipeline_task(self, metadata) -> Optional[str]:
+        """Get the pipeline task for the model with comprehensive detection."""
+        task = getattr(metadata, 'pipeline_tag', None) or getattr(metadata, 'task', None)
+        model_id = getattr(metadata, 'model_id', None) or getattr(metadata, 'id', None)
+        
+        # Comprehensive model patterns for task detection
+        seq2seq_model_patterns = [
+            't5', 'flan-t5', 'ul2', 'mt5', 'byt5', 'codet5',
+            'bart', 'mbart', 'plbart', 'pegasus', 'bigbird_pegasus',
+            'led', 'marian', 'opus-mt', 'blenderbot', 'prophetnet', 'fsmt',
+            'godel', 'seq2seq'  # Added GODEL and explicit seq2seq pattern
+        ]
+        
+        # Check model ID patterns
+        if model_id:
+            model_lower = model_id.lower()
+            for pattern in seq2seq_model_patterns:
+                if pattern in model_lower:
+                    return "text2text-generation"
+        
+        # Task mapping
+        task_mapping = {
+            "text-generation": "text-generation",
+            "text2text-generation": "text2text-generation", 
+            "conversational": "conversational",
+            "translation": "text2text-generation",
+            "summarization": "text2text-generation"
+        }
+        
+        mapped_task = task_mapping.get(task)
+        if mapped_task:
+            return mapped_task
+        
+        # Default based on model patterns
+        if model_id:
+            model_lower = model_id.lower()
+            for pattern in seq2seq_model_patterns:
+                if pattern in model_lower:
+                    return "text2text-generation"
+        
+        # Conservative default
+        return "text-generation"
+    
+    def _calculate_memory_usage(self, model) -> float:
+        """Calculate model memory usage in MB."""
+        try:
+            # Try to get actual GPU memory if using CUDA
+            if self.device == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize()
+                memory_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+                return memory_mb
+            
+            # Estimate based on parameter count
+            total_params = sum(p.numel() for p in model.parameters())
+            # Assume 4 bytes per parameter (float32)
+            memory_mb = (total_params * 4) / (1024 ** 2)
+            return memory_mb
+            
+        except Exception:
+            # Fallback estimation
+            return 500.0  # 500MB default

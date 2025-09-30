@@ -1,0 +1,16 @@
+{
+    "include": [
+        "app/src",
+        "scripts",
+        "*.py"
+    ],
+    "extraPaths": [
+        "app/src",
+        "scripts"
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": true,
+    "reportMissingTypeStubs": false,
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Linux"
+}

@@ -1,0 +1,163 @@
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Experiment results
+experiments/*/results/
+experiments/*/logs/
+experiments/*/*.csv
+experiments/*/*.json
+
+# Data directory contents (keep folder structure, ignore files)
+data/cache/*
+data/huggingface/*
+data/models/*
+data/research_datasets/*
+!data/cache/.gitkeep
+!data/huggingface/.gitkeep
+!data/models/.gitkeep
+!data/research_datasets/.gitkeep
+!data/README.md
+
+# Model and dataset file types (ignore everywhere)
+*.bin
+*.safetensors
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# HuggingFace cache and downloads
+.cache/
+huggingface/
+transformers_cache/
+datasets_cache/
+
+# Model files and weights
+*.pt
+*.pth
+*.ckpt
+*.model
+*.weights
+
+# Energy profiling data
+*.energy
+powerjoular_*
+codecarbon_*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/

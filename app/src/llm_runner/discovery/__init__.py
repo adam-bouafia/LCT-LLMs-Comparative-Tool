@@ -1,0 +1,1 @@
+"""Model discovery and search functionality."""
