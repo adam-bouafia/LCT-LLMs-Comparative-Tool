@@ -14,6 +14,9 @@ from abc import ABC, abstractmethod
 import json
 import re
 
+# Setup logger for this module
+logger = logging.getLogger(__name__)
+
 # Import evaluation libraries
 try:
     from rouge_score import rouge_scorer
@@ -514,9 +517,12 @@ class PairwiseComparisonAlgorithm(ComparisonAlgorithm):
         if self.reference_loader:
             try:
                 alpacaeval_data = self.reference_loader.load_alpacaeval_data()
-                return self._evaluate_with_alpacaeval(responses, alpacaeval_data)
+                if alpacaeval_data:
+                    return self._evaluate_with_alpacaeval(responses, alpacaeval_data)
+                else:
+                    logger.warning("AlpacaEval dataset is empty, falling back to heuristics")
             except Exception as e:
-                print(f"Warning: Could not load AlpacaEval data, falling back to heuristics: {e}")
+                logger.warning(f"Could not load AlpacaEval data, falling back to heuristics: {e}")
         
         # Fallback to heuristic pairwise comparison
         return self._evaluate_with_heuristics(responses)
@@ -788,7 +794,7 @@ Evaluation (1-10): """
                     ))
                 return results
             except Exception as e:
-                print(f"Warning: Could not load MT-Bench data, falling back to heuristics: {e}")
+                logger.warning(f"Could not load MT-Bench data, falling back to heuristics: {e}")
         
         # Fallback to heuristic evaluation
         # Note: This is a placeholder implementation
@@ -1912,7 +1918,7 @@ class TruthfulnessAlgorithm(ComparisonAlgorithm):
                     ))
                 return results
             except Exception as e:
-                print(f"Warning: Could not load TruthfulQA data, falling back to heuristics: {e}")
+                logger.warning(f"Could not load TruthfulQA data, falling back to heuristics: {e}")
         
         # Fallback to heuristic evaluation
         for response in responses:

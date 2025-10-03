@@ -521,6 +521,159 @@ class ReferenceDataLoader:
             ]
         }
     
+    def load_mtbench_data(self, max_samples: int = 50) -> List[Dict[str, Any]]:
+        """Load MT-Bench dataset for LLM-as-judge evaluation."""
+        if not DATASETS_AVAILABLE:
+            logger.warning("datasets library not available")
+            return []
+        
+        try:
+            # Try to load MT-Bench human judgments
+            dataset = load_dataset('lmsys/mt_bench_human_judgments', cache_dir=self.cache_dir)
+            
+            # Handle different dataset structures
+            if isinstance(dataset, dict):
+                dataset = list(dataset.values())[0]
+            
+            data_points = []
+            for i, item in enumerate(dataset):
+                if max_samples and i >= max_samples:
+                    break
+                    
+                data_points.append({
+                    'question': item.get('question', item.get('prompt', '')),
+                    'conversation': item.get('conversation', ''),
+                    'judgment': item.get('judgment', item.get('score', '')),
+                    'turn': item.get('turn', 1),
+                    'category': item.get('category', 'general'),
+                    'problem_id': f'mtbench_{i}'
+                })
+            
+            logger.info(f"Loaded {len(data_points)} MT-Bench samples")
+            return data_points
+            
+        except Exception as e:
+            logger.error(f"Failed to load MT-Bench data: {e}")
+            return []
+    
+    def load_truthfulqa_data(self, max_samples: int = 50) -> List[Dict[str, Any]]:
+        """Load TruthfulQA dataset for truthfulness evaluation."""
+        if not DATASETS_AVAILABLE:
+            logger.warning("datasets library not available")
+            return []
+        
+        try:
+            # Load TruthfulQA multiple choice format
+            dataset = load_dataset('EleutherAI/truthful_qa_mc', split='validation', cache_dir=self.cache_dir)
+            
+            data_points = []
+            for i, item in enumerate(dataset):
+                if max_samples and i >= max_samples:
+                    break
+                    
+                data_points.append({
+                    'question': item.get('question', ''),
+                    'best_answer': item.get('best_answer', ''),
+                    'correct_answers': item.get('correct_answers', []),
+                    'incorrect_answers': item.get('incorrect_answers', []),
+                    'category': item.get('category', 'general'),
+                    'problem_id': f'truthfulqa_{i}'
+                })
+            
+            logger.info(f"Loaded {len(data_points)} TruthfulQA samples")
+            return data_points
+            
+        except Exception as e:
+            logger.error(f"Failed to load TruthfulQA data: {e}")
+            return []
+    
+    def load_alpacaeval_data(self, max_samples: int = 50) -> List[Dict[str, Any]]:
+        """Load AlpacaEval dataset for pairwise comparison evaluation."""
+        if not DATASETS_AVAILABLE:
+            logger.warning("datasets library not available")
+            return []
+        
+        try:
+            # Try to load AlpacaEval dataset
+            dataset = load_dataset('tatsu-lab/alpaca_eval', cache_dir=self.cache_dir)
+            
+            # Handle different dataset structures
+            if isinstance(dataset, dict):
+                dataset = dataset.get('eval', dataset.get('test', list(dataset.values())[0]))
+            
+            data_points = []
+            for i, item in enumerate(dataset):
+                if max_samples and i >= max_samples:
+                    break
+                    
+                data_points.append({
+                    'instruction': item.get('instruction', item.get('prompt', '')),
+                    'output': item.get('output', item.get('response', '')),
+                    'generator': item.get('generator', 'unknown'),
+                    'instruction_id': item.get('instruction_id', f'alpaca_{i}'),
+                    'problem_id': f'alpacaeval_{i}'
+                })
+            
+            logger.info(f"Loaded {len(data_points)} AlpacaEval samples")
+            return data_points
+            
+        except Exception as e:
+            logger.error(f"Failed to load AlpacaEval data: {e}")
+            return []
+    
+    def validate_all_loaders(self) -> Dict[str, bool]:
+        """
+        Validate that all expected dataset loader methods are available.
+        Returns a dictionary of method names and their availability status.
+        """
+        expected_loaders = [
+            'load_humaneval_data',
+            'load_gsm8k_data', 
+            'load_hellaswag_data',
+            'load_safetybench_data',
+            'load_truthfulqa_data',
+            'load_mtbench_data',
+            'load_alpacaeval_data'
+        ]
+        
+        status = {}
+        for loader_name in expected_loaders:
+            try:
+                method = getattr(self, loader_name)
+                # Test if it's callable
+                if callable(method):
+                    status[loader_name] = True
+                    logger.debug(f"✓ {loader_name} is available")
+                else:
+                    status[loader_name] = False
+                    logger.warning(f"✗ {loader_name} exists but is not callable")
+            except AttributeError:
+                status[loader_name] = False
+                logger.warning(f"✗ {loader_name} is not available")
+        
+        return status
+    
+    def __getattr__(self, name: str):
+        """
+        Defensive method to handle any missing dataset loader methods gracefully.
+        This prevents AttributeError and provides graceful fallback for future datasets.
+        """
+        if name.startswith('load_') and name.endswith('_data'):
+            # Extract dataset name from method name
+            dataset_name = name.replace('load_', '').replace('_data', '')
+            
+            def fallback_loader(max_samples: int = 50) -> List[Dict[str, Any]]:
+                logger.warning(f"Dataset loader method '{name}' not implemented yet. "
+                             f"Returning empty dataset for '{dataset_name}'.")
+                return []
+            
+            # Cache the fallback method to avoid repeated warnings
+            setattr(self, name, fallback_loader)
+            return fallback_loader
+        
+        # For any other missing attributes, raise the normal AttributeError
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    
     def get_dataset_info(self, algorithm_name: str) -> Dict[str, str]:
         """Get information about the dataset for an algorithm."""
         return self.algorithm_datasets.get(algorithm_name, {})
