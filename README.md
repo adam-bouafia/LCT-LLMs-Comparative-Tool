@@ -4,12 +4,12 @@ A comprehensive tool for comparing Large Language Models across multiple evaluat
 
 ## 🌟 Features
 
-- **12 Research-Backed Algorithms**: Dataset-driven LLM comparison with scientific backing
-- **7 Integrated Research Datasets**: HumanEval, GSM8K, HellaSwag, TruthfulQA, SafetyBench, MT-Bench, AlpacaEval
-- **Energy Profiling**: Real energy consumption measurement with multiple profilers
-- **Universal Model Support**: Compatible with 40+ popular models via HuggingFace
+- **17 Research-Backed Algorithms**: Dataset-driven LLM comparison with scientific backing
+- **8 Integrated Research Datasets**: HumanEval, GSM8K, HellaSwag, TruthfulQA, SafetyBench, MT-Bench, AlpacaEval, Arena Preferences
+- **Granular Energy Profiling**: Stage-by-stage energy tracking (dataset loading, model init, inference, metrics)
+- **Universal Model Support**: Compatible with all HuggingFace Transformers models
 - **Interactive CLI**: User-friendly menu-driven interface with search capabilities
-- **Comprehensive Results**: Detailed CSV exports with all metrics and energy data
+- **Comprehensive Results**: Detailed CSV exports with per-algorithm and per-prompt energy data
 - **Flexible Configuration**: Save/load experiment configurations
 - **Model Discovery**: Search and browse HuggingFace models directly from CLI
 - **System Diagnostics**: Built-in compatibility and dependency checking
@@ -62,18 +62,23 @@ All algorithms are backed by established research datasets for scientific validi
 
 ## 🔋 Energy Profiling
 
-Choose from multiple energy profiling options:
+**CodeCarbon** - Comprehensive hardware-level energy measurement:
 
-1. **None**: No energy profiling
-2. **PowerJoular**: Detailed energy measurement (requires sudo)
-3. **CodeCarbon**: Carbon footprint tracking
+✓ **RAPL (Running Average Power Limit)**: Real CPU energy from hardware counters  
+✓ **GPU Tracking**: NVIDIA GPU energy via nvidia-smi  
+✓ **CO2 Emissions**: Automatic carbon footprint calculation  
+✓ **No Root Required**: Reads `/sys/class/powercap` files directly  
+✓ **Research-Validated**: Compared against physical power meters (2025 studies)
 
 Features:
-- CPU energy usage tracking
+- Hardware-level measurements in microjoules (μJ)
+- CPU package, core, DRAM, and integrated GPU energy
+- NVIDIA discrete GPU tracking via NVML
 - Memory consumption monitoring
-- Carbon footprint estimation
+- Carbon footprint with regional grid data
 - Real-time energy monitoring during experiments
 - Detailed energy breakdowns per model and algorithm
+- Stage-by-stage tracking (dataset loading, model init, inference, metrics)
 
 ## 📁 Project Structure
 

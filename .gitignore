@@ -98,22 +98,26 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Experiment results
-experiments/*/results/
-experiments/*/logs/
-experiments/*/*.csv
-experiments/*/*.json
+# Experiment results (ignore all experiment data)
+experiments/*/
+!experiments/.gitkeep
 
 # Data directory contents (keep folder structure, ignore files)
 data/cache/*
 data/huggingface/*
 data/models/*
 data/research_datasets/*
+data/datasets/*
 !data/cache/.gitkeep
 !data/huggingface/.gitkeep
 !data/models/.gitkeep
 !data/research_datasets/.gitkeep
+!data/datasets/.gitkeep
 !data/README.md
+
+# Scripts data cache (HuggingFace datasets downloaded during installation)
+scripts/data/cache/*
+!scripts/data/cache/.gitkeep
 
 # Model and dataset file types (ignore everywhere)
 *.bin
@@ -122,6 +126,9 @@ data/research_datasets/*
 *.hdf5
 *.pkl
 *.pickle
+*.parquet
+*.arrow
+*.json.gz
 
 # HuggingFace cache and downloads
 .cache/
@@ -138,7 +145,6 @@ datasets_cache/
 
 # Energy profiling data
 *.energy
-powerjoular_*
 codecarbon_*
 
 # OS generated files
