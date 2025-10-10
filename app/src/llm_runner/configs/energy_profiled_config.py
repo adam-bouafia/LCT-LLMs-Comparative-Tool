@@ -14,7 +14,7 @@ import subprocess
 import shlex
 import signal
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from pathlib import Path
 from os.path import dirname, realpath
 
@@ -28,24 +28,29 @@ try:
         RunTableModel,
     )
     from experiment_runner.ConfigValidator.Config.Models.RunnerContext import (
-        RunnerContext,
+        RunnerContext as ExperimentRunnerContext,
     )
     from experiment_runner.ConfigValidator.Config.Models.OperationType import (
-        OperationType,
+        OperationType as ExperimentOperationType,
     )
     from experiment_runner.ProgressManager.Output.OutputProcedure import (
-        OutputProcedure as output,
+        OutputProcedure as output,  # type: ignore[assignment]
     )
+    
+    # Type aliases for local use
+    RunnerContext = ExperimentRunnerContext  # type: ignore[assignment,misc]
+    OperationType = ExperimentOperationType  # type: ignore[assignment,misc]
 except ImportError:
 
-    class RunnerContext:
+    class RunnerContext:  # type: ignore[no-redef]
         """Fallback context for standalone use."""
 
         def __init__(self):
             self.run_dir = Path(".")
             self.run_nr = 0
+            self.run_variation: Dict[str, Any] = {}
 
-    class OperationType:
+    class OperationType:  # type: ignore[no-redef]
         """Fallback operation type."""
 
         AUTO = "AUTO"
@@ -70,27 +75,21 @@ from io import StringIO
 logger = logging.getLogger(__name__)
 
 
-class ModelLoadConfig:
-    """Configuration for model loading with memory-efficient defaults."""
-
-    device: str = "auto"
-    torch_dtype: str = "auto"
-    trust_remote_code: bool = False
-    use_cache: bool = True
-    low_cpu_mem_usage: bool = True
-
-
 try:
-    from experiment_runner.ConfigValidator.Config.Models.FactorModel import FactorModel
-    from experiment_runner.ExtendedTyping.Typing import SupportsStr
+    from experiment_runner.ConfigValidator.Config.Models.FactorModel import FactorModel as ExperimentFactorModel
+    from experiment_runner.ExtendedTyping.Typing import SupportsStr as ExperimentSupportsStr
+    
+    # Type aliases
+    FactorModel = ExperimentFactorModel  # type: ignore[misc]
+    SupportsStr = ExperimentSupportsStr  # type: ignore[misc]
 except ImportError:
 
-    class SupportsStr:
+    class SupportsStr:  # type: ignore[no-redef]
         """Fallback string support type."""
 
         pass
 
-    class FactorModel:
+    class FactorModel:  # type: ignore[no-redef]
         """Fallback factor model for standalone use."""
 
         def __init__(self, name, values):
@@ -120,7 +119,7 @@ class EnergyProfiledLLMConfig:
     results_output_path: Path = ROOT_DIR / "experiments"
 
     """Experiment operation type."""
-    operation_type: OperationType = OperationType.AUTO
+    operation_type: Any = OperationType.AUTO  # type: ignore[assignment]
 
     """Time between runs (allow for cooling down)."""
     time_between_runs_in_ms: int = 5000  # 5 seconds for energy measurement cooldown
@@ -180,7 +179,7 @@ class EnergyProfiledLLMConfig:
     max_memory_gb: float = 8.0
 
     """Model loading configuration."""
-    model_load_config: ModelLoadConfig = None  # Initialized in __init__
+    model_load_config: Optional[ModelLoadConfig] = None  # Initialized in __init__
 
     """Text generation parameters."""
     """Text generation parameters for LLM inference."""
@@ -340,7 +339,7 @@ class EnergyProfiledLLMConfig:
             )
 
         self.run_table_model = RunTableModel(
-            factors=[model_factor, prompt_factor],
+            factors=[model_factor, prompt_factor],  # type: ignore[list-item]
             exclude_variations=[],
             repetitions=self.repetitions,
             data_columns=data_columns,
@@ -613,7 +612,7 @@ class EnergyProfiledLLMConfig:
             self.emissions_tracker = EmissionsTracker(
                 output_dir=str(context.run_dir),
                 project_name=f"llm_comparison_{self.current_model_id}",
-                experiment_id=context.run_nr,
+                experiment_id=str(context.run_nr),
             )
             self.emissions_tracker.start()
             output.console_log("CodeCarbon tracking started")
