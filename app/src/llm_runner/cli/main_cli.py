@@ -1104,8 +1104,8 @@ def apikey(service, key, remove, list_keys, show):
         console.print(f"\nSet key: [cyan]lct apikey {service} --key <your-key>[/cyan]")
 
 
-@cli.command()
-def setup():
+@cli.command(name="setup-tools")
+def setup_tools():
     """Run comprehensive setup for energy profiling and dependencies."""
     import subprocess
     import os
@@ -1205,8 +1205,8 @@ def verify():
         console.print(f"[red]❌ Verification error: {e}[/red]")
 
 
-@cli.command()
-def status():
+@cli.command(name="status-check")
+def status_check():
     """Quick status check of LCT setup and dependencies."""
 
     console.print("[bold blue]🔧 LCT Status Check[/bold blue]")

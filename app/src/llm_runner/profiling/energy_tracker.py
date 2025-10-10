@@ -7,7 +7,7 @@ Tracks energy usage per stage: dataset loading, model initialization, inference,
 
 import time
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -310,7 +310,7 @@ class EnergyTracker:
         """
         return {idx: profile.to_dict() for idx, profile in self.prompt_profiles.items()}
 
-    def get_full_report(self) -> Dict[str, any]:
+    def get_full_report(self) -> Dict[str, Any]:
         """
         Generate comprehensive energy report.
 

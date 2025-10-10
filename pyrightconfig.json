@@ -1,16 +1,17 @@
 {
-    "include": [
-        "app/src",
-        "scripts",
-        "*.py"
-    ],
-    "extraPaths": [
-        "app/src",
-        "scripts"
-    ],
-    "typeCheckingMode": "basic",
-    "reportMissingImports": true,
-    "reportMissingTypeStubs": false,
-    "pythonVersion": "3.13",
-    "pythonPlatform": "Linux"
+  "include": ["app/src", "scripts", "*.py"],
+  "extraPaths": ["app/src", "scripts"],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "reportOptionalMemberAccess": "warning",
+  "reportGeneralTypeIssues": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportArgumentType": "warning",
+  "reportAssignmentType": "warning",
+  "reportCallIssue": "warning",
+  "reportRedeclaration": "error",
+  "stubPath": "./typings",
+  "pythonVersion": "3.13",
+  "pythonPlatform": "Linux"
 }

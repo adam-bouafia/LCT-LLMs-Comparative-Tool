@@ -4482,9 +4482,17 @@ def create_experiment_from_config(config: Dict[str, Any]) -> str:
         env["PYTHONPATH"] = app_src_path
 
     # Run the command from project root with proper Python path
+    # Show real-time progress instead of blocking silently
+    from rich.console import Console
+
+    console = Console()
+
+    console.print("[dim]→ Validating configuration...[/dim]")
     result = subprocess.run(
         cmd, capture_output=True, text=True, cwd=str(project_root), env=env
     )
+
+    console.print("[dim]→ Writing experiment files...[/dim]")
 
     if result.returncode != 0:
         raise Exception(f"Failed to create experiment: {result.stderr}")
