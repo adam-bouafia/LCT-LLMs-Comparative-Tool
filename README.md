@@ -5,14 +5,15 @@ A comprehensive tool for comparing Large Language Models across multiple evaluat
 ## 🌟 Features
 
 - **17 Research-Backed Algorithms**: Dataset-driven LLM comparison with scientific backing
-- **8 Integrated Research Datasets**: HumanEval, GSM8K, HellaSwag, TruthfulQA, SafetyBench, MT-Bench, AlpacaEval, Arena Preferences
-- **Granular Energy Profiling**: Stage-by-stage energy tracking (dataset loading, model init, inference, metrics)
+- **15+ Integrated Research Datasets**: HumanEval, GSM8K, HellaSwag, TruthfulQA, SafetyBench, MT-Bench, AlpacaEval, PIQA, CommonsenseQA, CNN/DailyMail, XSum, GLUE, WMT16, MBPP, Winogrande, and more
+- **Granular Energy Profiling**: CodeCarbon with hardware-level RAPL counters, GPU tracking, and CO2 emissions
+- **Stage-by-Stage Tracking**: Energy monitoring for dataset loading, model initialization, inference, and metrics computation
 - **Universal Model Support**: Compatible with all HuggingFace Transformers models
-- **Interactive CLI**: User-friendly menu-driven interface with search capabilities
+- **Interactive CLI**: User-friendly menu-driven interface with search capabilities and model discovery
 - **Comprehensive Results**: Detailed CSV exports with per-algorithm and per-prompt energy data
-- **Flexible Configuration**: Save/load experiment configurations
-- **Model Discovery**: Search and browse HuggingFace models directly from CLI
-- **System Diagnostics**: Built-in compatibility and dependency checking
+- **Flexible Configuration**: Save/load experiment configurations for reproducible research
+- **Model Discovery**: Search and browse 500,000+ HuggingFace models directly from CLI
+- **System Diagnostics**: Built-in compatibility and dependency checking with automated setup
 
 ## 🚀 Quick Start
 
@@ -40,45 +41,105 @@ A comprehensive tool for comparing Large Language Models across multiple evaluat
 
 ## 📊 Research-Backed Evaluation Algorithms
 
-All algorithms are backed by established research datasets for scientific validity:
+All algorithms are backed by established research datasets for scientific validity. Each algorithm is paired with specific datasets to ensure accurate and reproducible evaluation.
 
-### Text Evaluation Metrics (5)
-- **BLEU Score**: Translation quality with reference data
-- **ROUGE Score**: Summarization evaluation (CNN/DailyMail, XSum)
-- **BERTScore**: Semantic similarity with STS Benchmark
-- **Semantic Similarity**: Contextual understanding (STS Benchmark)
-- **STS Algorithm**: Semantic Textual Similarity evaluation
+### Text Evaluation Metrics (5 algorithms)
 
-### LLM-Based Evaluation (2)
-- **Pairwise Comparison**: Head-to-head evaluation (AlpacaEval - 805 pairs)
-- **LLM-as-Judge**: AI-powered evaluation (MT-Bench - 3,355 judgments)
+1. **BLEU Score** - Translation quality measurement
+   - Dataset: **WMT16** (de-en, ro-en translation pairs)
+   - Reference-based n-gram overlap metric
 
-### Task-Specific Benchmarks (5)
-- **Code Generation**: Programming capability (HumanEval - 164 problems)
-- **Mathematical Reasoning**: Math problem solving (GSM8K - 1,319 problems)
-- **Commonsense Reasoning**: Common sense understanding (HellaSwag - 10,042 scenarios)
-- **Safety Alignment**: Safety and ethics assessment (SafetyBench - 11,435 scenarios)
-- **Truthfulness**: Factual accuracy assessment (TruthfulQA - 817 questions)
+2. **ROUGE Score** - Summarization evaluation
+   - Datasets: **CNN/DailyMail** (300K+ articles), **XSum** (226K BBC articles)
+   - Measures recall-oriented overlap for abstractive/extractive summarization
+
+3. **BERTScore** - Semantic similarity using contextual embeddings
+   - Dataset: **GLUE MRPC & STS-B** (Microsoft Research Paraphrase Corpus, Semantic Textual Similarity Benchmark)
+   - Context-aware similarity using pre-trained BERT models
+
+4. **Semantic Similarity** - Cosine similarity with sentence transformers
+   - Dataset: **GLUE STS-B** (5,749 sentence pairs with human similarity scores)
+   - Uses sentence-transformers/all-MiniLM-L6-v2 embeddings
+
+5. **STS Algorithm** - Semantic Textual Similarity evaluation
+   - Dataset: **GLUE STS-B** (Semantic Textual Similarity Benchmark)
+   - Correlation with human similarity judgments
+
+### LLM-Based Evaluation (2 algorithms)
+
+6. **Pairwise Comparison** - Head-to-head model evaluation
+   - Dataset: **AlpacaEval** (805 instruction-following pairs)
+   - GPT-4 as judge for comparing model outputs
+
+7. **LLM-as-Judge** - AI-powered quality assessment
+   - Dataset: **MT-Bench** (3,355 human judgments, 80 multi-turn conversations)
+   - Multi-turn conversation quality evaluation
+
+### Task-Specific Benchmarks (10 algorithms)
+
+8. **Code Generation** - Programming problem solving
+   - Dataset: **HumanEval** (164 hand-written Python programming problems)
+   - Pass@k metric with unit test validation
+
+9. **Mathematical Reasoning** - Math problem solving capability
+   - Dataset: **GSM8K** (8.5K grade school math word problems)
+   - Chain-of-thought reasoning evaluation
+
+10. **Commonsense Reasoning** - Physical and social common sense
+    - Dataset: **HellaSwag** (70K+ commonsense inference scenarios)
+    - Context completion with adversarial filtering
+
+11. **Safety Alignment** - Safety and ethics assessment
+    - Dataset: **SafetyBench** (11,435 safety scenarios in English & Chinese)
+    - Multi-category safety evaluation (7 categories, 46 tasks)
+
+12. **Truthfulness** - Factual accuracy and hallucination detection
+    - Dataset: **TruthfulQA** (817 questions spanning 38 categories)
+    - Tests resistance to generating false information
+
+13. **Physical Commonsense** - Physical reasoning capability
+    - Dataset: **PIQA** (Physical Interaction QA - 16K questions)
+    - Physical world understanding and causal reasoning
+
+14. **General Commonsense** - Question answering with world knowledge
+    - Dataset: **CommonsenseQA** (12K questions with 5 answer choices)
+    - Requires complex reasoning over commonsense knowledge
+
+15. **Code Reasoning** - Multi-step code problem solving
+    - Dataset: **MBPP** (Mostly Basic Python Problems - 974 problems)
+    - Entry-level programming tasks with test-based validation
+
+16. **Sentence Completion** - Commonsense sentence completion
+    - Dataset: **Winogrande** (44K+ problems, XL variant)
+    - Winograd schema challenge for pronoun resolution
+
+17. **Robustness Testing** - Adversarial and edge case evaluation
+    - Datasets: **HH-RLHF** (Anthropic Helpful & Harmless - 170K conversations)
+    - Tests model safety, helpfulness, and robustness to adversarial inputs
 
 ## 🔋 Energy Profiling
 
-**CodeCarbon** - Comprehensive hardware-level energy measurement:
+**CodeCarbon** - The sole energy profiler for comprehensive hardware-level measurement:
 
-✓ **RAPL (Running Average Power Limit)**: Real CPU energy from hardware counters  
-✓ **GPU Tracking**: NVIDIA GPU energy via nvidia-smi  
-✓ **CO2 Emissions**: Automatic carbon footprint calculation  
-✓ **No Root Required**: Reads `/sys/class/powercap` files directly  
-✓ **Research-Validated**: Compared against physical power meters (2025 studies)
+### Key Capabilities
 
-Features:
-- Hardware-level measurements in microjoules (μJ)
-- CPU package, core, DRAM, and integrated GPU energy
-- NVIDIA discrete GPU tracking via NVML
-- Memory consumption monitoring
-- Carbon footprint with regional grid data
-- Real-time energy monitoring during experiments
-- Detailed energy breakdowns per model and algorithm
-- Stage-by-stage tracking (dataset loading, model init, inference, metrics)
+✓ **RAPL (Running Average Power Limit)**: Direct CPU energy from Intel/AMD hardware counters  
+✓ **GPU Tracking**: NVIDIA GPU energy via nvidia-smi/NVML API  
+✓ **CO2 Emissions**: Automatic carbon footprint calculation with regional grid data  
+✓ **No Root Required**: Reads `/sys/class/powercap/intel-rapl/*/energy_uj` files directly  
+✓ **Research-Validated**: Accuracy verified against physical power meters (2025 studies)
+
+### Detailed Features
+
+- **Hardware-level precision**: Measurements in microjoules (μJ), updated every ~1ms
+- **Comprehensive coverage**: CPU package, cores, DRAM, integrated GPU, and discrete GPU
+- **NVIDIA GPU support**: Direct NVML interface for real-time GPU power consumption
+- **Memory monitoring**: RAM usage tracking throughout experiment lifecycle
+- **Carbon intelligence**: Automatic CO2 calculations with regional electricity grid emissions
+- **Real-time tracking**: Live energy monitoring during experiments with progress updates
+- **Granular breakdowns**: Per-model, per-algorithm, and per-prompt energy analysis
+- **Stage-by-stage profiling**: Separate tracking for dataset loading, model initialization, inference, and metrics computation
+- **Export-ready data**: Detailed CSV exports with energy metrics for research publication
 
 ## 📁 Project Structure
 
@@ -215,14 +276,17 @@ python3 app/src/ui/results_explorer.py         # Results analysis
 
 ## 📈 Results
 
-The tool generates comprehensive results including:
+The tool generates comprehensive, publication-ready results including:
 
-- Individual run data with all 12 research-backed algorithms
-- Aggregated statistics and model comparisons
-- Energy consumption profiles (CPU, memory, carbon footprint)
-- Detailed CSV exports with algorithm-specific metrics
-- Real-time progress tracking during experiments
-- Built-in results explorer for interactive analysis
+- **Complete Algorithm Coverage**: Individual run data with all 17 research-backed algorithms
+- **Statistical Analysis**: Aggregated statistics, model comparisons, and performance rankings
+- **Energy Profiling**: Detailed energy consumption profiles (CPU, GPU, DRAM, memory, carbon footprint)
+- **Per-Stage Metrics**: Energy tracking for dataset loading, model initialization, inference, and metrics computation
+- **Dataset-Specific Results**: Performance metrics tied to specific research datasets (15+ datasets)
+- **CSV Exports**: Detailed exports with algorithm-specific metrics, timestamps, and energy data
+- **Real-Time Monitoring**: Live progress tracking during experiments with stage completion indicators
+- **Interactive Explorer**: Built-in results analysis tool for post-experiment visualization
+- **Reproducibility**: All configurations and parameters saved with results for research reproducibility
 
 ## 🔧 Configuration
 
@@ -271,7 +335,7 @@ If you use this tool in your research, please cite:
   author={Adam Bouafia},
   year={2025},
   url={https://github.com/adam-bouafia/LCT-LLMs-Comparative-Tool},
-  note={Comprehensive LLM evaluation with 12 research-backed algorithms and 7 integrated datasets}
+  note={Comprehensive LLM evaluation with 17 research-backed algorithms and 15+ integrated datasets including HumanEval, GSM8K, HellaSwag, TruthfulQA, SafetyBench, MT-Bench, AlpacaEval, PIQA, CommonsenseQA, CNN/DailyMail, XSum, GLUE, WMT16, MBPP, Winogrande, and HH-RLHF. Features hardware-level energy profiling with CodeCarbon.}
 }
 ```
 
