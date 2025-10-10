@@ -256,17 +256,17 @@ class UniversalModelLoader:
             
             # Load tokenizer with fallback for SentencePiece/Tiktoken issues
             print(f"   📝 Loading tokenizer...")
-            tokenizer_kwargs = {
+            tokenizer_kwargs: Dict[str, Any] = {
                 'trust_remote_code': self.config.trust_remote_code,
                 'use_fast': True if is_torch_available() else False
             }
             if cache_dir:
-                tokenizer_kwargs['cache_dir'] = cache_dir
+                tokenizer_kwargs['cache_dir'] = cache_dir  # type: ignore[assignment]
             
             # Add HuggingFace token for gated/private models
             hf_token = os.getenv('HF_TOKEN') or os.getenv('HUGGINGFACE_HUB_TOKEN')
             if hf_token:
-                tokenizer_kwargs['token'] = hf_token
+                tokenizer_kwargs['token'] = hf_token  # type: ignore[assignment]
                 print(f"   🔐 Using HuggingFace authentication for gated models")
             
             # Try loading tokenizer with fast tokenizer first, fallback to slow if it fails
@@ -293,7 +293,7 @@ class UniversalModelLoader:
             print(f"   🏗️  Trying model class: {model_class.__name__}")
             
             # Set up loading parameters
-            model_kwargs = {
+            model_kwargs: Dict[str, Any] = {
                 'trust_remote_code': self.config.trust_remote_code,
                 'low_cpu_mem_usage': self.config.low_cpu_mem_usage,
                 'use_cache': self.config.use_cache
@@ -301,11 +301,11 @@ class UniversalModelLoader:
             
             # Add cache directory if available
             if cache_dir:
-                model_kwargs['cache_dir'] = cache_dir
+                model_kwargs['cache_dir'] = cache_dir  # type: ignore[assignment]
             
             # Add HuggingFace token for gated/private models
             if hf_token:
-                model_kwargs['token'] = hf_token
+                model_kwargs['token'] = hf_token  # type: ignore[assignment]
             
             # Handle torch_dtype
             if self.config.torch_dtype and self.config.torch_dtype != "auto":
