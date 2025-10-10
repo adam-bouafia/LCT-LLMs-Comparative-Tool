@@ -17,7 +17,7 @@ from transformers import (
     AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM,
     AutoConfig, pipeline, Pipeline
 )
-from transformers.utils import is_torch_available
+from transformers.utils.import_utils import is_torch_available  # type: ignore[attr-defined]
 
 try:
     from ...core.data_manager import get_data_manager
@@ -49,7 +49,7 @@ class LoadedModel:
     memory_usage_mb: float = 0.0
     load_time_seconds: float = 0.0
     last_used: float = 0.0
-    lock: threading.Lock = None
+    lock: Optional[threading.Lock] = None  # type: ignore[assignment]
 
     def __post_init__(self):
         if self.lock is None:
@@ -113,14 +113,15 @@ class ModelMemoryManager:
         """Unload a specific model from memory."""
         if model_id in self.loaded_models:
             loaded_model = self.loaded_models[model_id]
-            with loaded_model.lock:
-                # Clean up the model
-                if hasattr(loaded_model.model, 'to'):
-                    loaded_model.model.to('cpu')
-                del loaded_model.model
-                del loaded_model.tokenizer
-                if loaded_model.pipeline_obj:
-                    del loaded_model.pipeline_obj
+            if loaded_model.lock:
+                with loaded_model.lock:
+                    # Clean up the model
+                    if hasattr(loaded_model.model, 'to'):
+                        loaded_model.model.to('cpu')
+                    del loaded_model.model
+                    del loaded_model.tokenizer
+                    if loaded_model.pipeline_obj:
+                        del loaded_model.pipeline_obj
                 
                 # Remove from tracking
                 del self.loaded_models[model_id]
@@ -339,7 +340,7 @@ class UniversalModelLoader:
             
             # Move to device
             print(f"   🚚 Moving model to device: {self.device}")
-            model = model.to(self.device)
+            model = model.to(self.device)  # type: ignore[arg-type]
             
             # Set up pipeline if possible
             pipeline_obj = None
@@ -347,8 +348,8 @@ class UniversalModelLoader:
                 print(f"   🔗 Setting up inference pipeline...")
                 pipeline_task = self._get_pipeline_task(metadata)
                 if pipeline_task:
-                    pipeline_obj = pipeline(
-                        pipeline_task,
+                    pipeline_obj = pipeline(  # type: ignore[call-overload]
+                        pipeline_task,  # type: ignore[arg-type]
                         model=model,
                         tokenizer=tokenizer,
                         device=0 if self.device == "cuda" else -1,
@@ -509,6 +510,10 @@ class UniversalModelLoader:
         
         generation_start = time.time()
         
+        if not loaded_model.lock:
+            logger.error(f"Model {model_id} has no lock")
+            return None
+        
         with loaded_model.lock:
             try:
                 if loaded_model.pipeline_obj:
@@ -579,7 +584,7 @@ class UniversalModelLoader:
                         elif isinstance(result, str):
                             response = result
                         elif hasattr(result, 'generated_text'):
-                            response = result.generated_text
+                            response = result.generated_text  # type: ignore[union-attr]
                         else:
                             print(f"   ⚠️ Unexpected result format: {type(result)}, content: {result}")
                             response = str(result)
@@ -663,8 +668,8 @@ class UniversalModelLoader:
                 # Calculate memory usage for this model
                 if hasattr(loaded_model, 'model') and loaded_model.model:
                     memory_mb = self._calculate_memory_usage(loaded_model.model)
-                elif hasattr(loaded_model, 'pipeline') and loaded_model.pipeline:
-                    memory_mb = self._calculate_memory_usage(loaded_model.pipeline.model)
+                elif hasattr(loaded_model, 'pipeline_obj') and loaded_model.pipeline_obj:  # type: ignore[attr-defined]
+                    memory_mb = self._calculate_memory_usage(loaded_model.pipeline_obj.model)  # type: ignore[attr-defined]
                 else:
                     memory_mb = 0.0
                 
@@ -854,7 +859,7 @@ class UniversalModelLoader:
             "summarization": "text2text-generation"
         }
         
-        mapped_task = task_mapping.get(task)
+        mapped_task = task_mapping.get(task) if task else None  # type: ignore[arg-type]
         if mapped_task:
             return mapped_task
         
