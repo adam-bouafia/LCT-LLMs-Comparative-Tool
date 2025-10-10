@@ -276,17 +276,40 @@ class UniversalModelLoader:
                 tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
                 print(f"   ✅ Tokenizer loaded (vocab size: {tokenizer.vocab_size})")
             except Exception as tokenizer_error:
-                # Fallback to slow tokenizer for SentencePiece/Tiktoken conversion issues
-                if "SentencePiece" in str(tokenizer_error) or "Tiktoken" in str(tokenizer_error):
-                    print(f"   ⚠️  Fast tokenizer failed, trying slow tokenizer...")
-                    tokenizer_kwargs['use_fast'] = False
+                error_msg = str(tokenizer_error)
+                # Check if this is a conversion error (SentencePiece/Tiktoken)
+                is_conversion_error = (
+                    "SentencePiece" in error_msg or 
+                    "Tiktoken" in error_msg or
+                    "Converting" in error_msg
+                )
+                
+                if is_conversion_error:
+                    print(f"   ⚠️  Fast tokenizer conversion failed, using legacy slow tokenizer...")
+                    # Try with legacy=True to bypass fast tokenizer conversion issues
                     try:
-                        tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
-                        print(f"   ✅ Slow tokenizer loaded (vocab size: {tokenizer.vocab_size})")
-                    except Exception as slow_error:
-                        print(f"   ❌ Both fast and slow tokenizers failed!")
-                        raise RuntimeError(f"Failed to load tokenizer for {model_id}: {slow_error}")
+                        from transformers import LlamaTokenizer, AutoTokenizer
+                        
+                        # First, try LlamaTokenizer directly for LLaMA-based models
+                        if 'llama' in model_id.lower() or 'eagle' in model_id.lower():
+                            print(f"   🔧 Trying LlamaTokenizer directly...")
+                            tokenizer_kwargs_legacy = {k: v for k, v in tokenizer_kwargs.items() if k != 'use_fast'}
+                            tokenizer = LlamaTokenizer.from_pretrained(model_id, **tokenizer_kwargs_legacy)
+                            print(f"   ✅ LlamaTokenizer loaded (vocab size: {tokenizer.vocab_size})")
+                        else:
+                            # For other models, try with legacy parameter
+                            tokenizer_kwargs_legacy = tokenizer_kwargs.copy()
+                            tokenizer_kwargs_legacy['use_fast'] = False
+                            tokenizer_kwargs_legacy['legacy'] = True  # Use legacy loading
+                            tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs_legacy)
+                            print(f"   ✅ Legacy tokenizer loaded (vocab size: {tokenizer.vocab_size})")
+                    except Exception as legacy_error:
+                        print(f"   ❌ Legacy tokenizer also failed!")
+                        print(f"   🔍 Error: {legacy_error}")
+                        raise RuntimeError(f"Failed to load tokenizer for {model_id}: {legacy_error}")
                 else:
+                    # Different error, re-raise it
+                    print(f"   ❌ Tokenizer loading failed with non-conversion error")
                     raise tokenizer_error
             
             # Determine model class with fallback
