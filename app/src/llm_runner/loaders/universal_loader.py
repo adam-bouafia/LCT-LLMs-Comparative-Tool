@@ -254,7 +254,7 @@ class UniversalModelLoader:
                 cache_dir = str(self.data_manager.get_model_cache_dir(model_id))
                 print(f"   � Using organized cache: {cache_dir}")
             
-            # Load tokenizer
+            # Load tokenizer with fallback for SentencePiece/Tiktoken issues
             print(f"   📝 Loading tokenizer...")
             tokenizer_kwargs = {
                 'trust_remote_code': self.config.trust_remote_code,
@@ -268,9 +268,25 @@ class UniversalModelLoader:
             if hf_token:
                 tokenizer_kwargs['token'] = hf_token
                 print(f"   🔐 Using HuggingFace authentication for gated models")
-                
-            tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
-            print(f"   ✅ Tokenizer loaded (vocab size: {tokenizer.vocab_size})")
+            
+            # Try loading tokenizer with fast tokenizer first, fallback to slow if it fails
+            tokenizer = None
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
+                print(f"   ✅ Tokenizer loaded (vocab size: {tokenizer.vocab_size})")
+            except Exception as tokenizer_error:
+                # Fallback to slow tokenizer for SentencePiece/Tiktoken conversion issues
+                if "SentencePiece" in str(tokenizer_error) or "Tiktoken" in str(tokenizer_error):
+                    print(f"   ⚠️  Fast tokenizer failed, trying slow tokenizer...")
+                    tokenizer_kwargs['use_fast'] = False
+                    try:
+                        tokenizer = AutoTokenizer.from_pretrained(model_id, **tokenizer_kwargs)
+                        print(f"   ✅ Slow tokenizer loaded (vocab size: {tokenizer.vocab_size})")
+                    except Exception as slow_error:
+                        print(f"   ❌ Both fast and slow tokenizers failed!")
+                        raise RuntimeError(f"Failed to load tokenizer for {model_id}: {slow_error}")
+                else:
+                    raise tokenizer_error
             
             # Determine model class with fallback
             model_class = self._get_model_class(metadata)
