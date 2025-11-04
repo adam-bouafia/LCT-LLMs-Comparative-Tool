@@ -1,4 +1,4 @@
-# LLM Comparative Tool 🤖⚡
+# LLM Comparative Tool
 
 A comprehensive tool for comparing Large Language Models across multiple evaluation metrics including performance, energy consumption, and various NLP benchmarks with research-backed datasets.
 
@@ -25,18 +25,33 @@ A comprehensive tool for comparing Large Language Models across multiple evaluat
 
 The fastest way to get started - no installation required!
 
+**CPU-only version (recommended for most users, ~1.5GB):**
 ```bash
-# Pull and run the latest version
 docker pull adambouafia/lct:latest
 docker run -it --rm adambouafia/lct:latest
 ```
 
+**GPU version (for users with NVIDIA GPUs, ~4.5GB):**
+```bash
+docker pull adambouafia/lct:gpu
+docker run -it --rm --gpus all adambouafia/lct:gpu
+```
+
+> **Note:** The `:latest` tag uses CPU-only PyTorch for smaller size and broader compatibility. If you have an NVIDIA GPU and want accelerated LLM inference, use the `:gpu` tag.
+
 **With data persistence:**
 ```bash
+# CPU version
 docker run -it --rm \
   -v $(pwd)/experiments:/app/experiments \
   -v $(pwd)/saved_configs:/app/saved_configs \
   adambouafia/lct:latest
+
+# GPU version (requires nvidia-docker)
+docker run -it --rm --gpus all \
+  -v $(pwd)/experiments:/app/experiments \
+  -v $(pwd)/saved_configs:/app/saved_configs \
+  adambouafia/lct:gpu
 ```
 
 **Or use Docker Compose:**
