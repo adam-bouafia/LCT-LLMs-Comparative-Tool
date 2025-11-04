@@ -3028,7 +3028,8 @@ class InteractiveLCT:
 
         # Check Python version
         python_version = platform.python_version()
-        python_ok = python_version >= "3.8"
+        version_info = sys.version_info
+        python_ok = version_info >= (3, 8)
         python_status = "✅ Good" if python_ok else "❌ Update needed"
         table.add_row(
             "Python Version", python_status, f"{python_version} (≥3.8 required)"
@@ -3122,7 +3123,23 @@ class InteractiveLCT:
         try:
             from huggingface_hub import whoami
 
-            token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+            # Check all possible token environment variables
+            token = (
+                os.getenv("HF_TOKEN")
+                or os.getenv("HUGGINGFACE_HUB_TOKEN")
+                or os.getenv("HUGGINGFACE_API_KEY")
+            )
+            
+            # Also check API key manager
+            try:
+                from llm_runner.config.api_keys import get_api_key_manager
+                manager = get_api_key_manager()
+                stored_token = manager.get_api_key("huggingface")
+                if stored_token and not token:
+                    token = stored_token
+            except:
+                pass
+            
             if token:
                 try:
                     user_info = whoami(token=token)
@@ -3137,6 +3154,85 @@ class InteractiveLCT:
         table.add_row("🔑 HuggingFace Auth", auth_status, auth_details)
 
         self.console.print(table)
+        self.console.print()
+        
+        # Experiment Readiness Assessment
+        self.console.print("[bold cyan]🎯 Experiment Readiness:[/bold cyan]\n")
+        
+        readiness_table = Table(box=box.ROUNDED, show_header=False)
+        readiness_table.add_column("Capability", style="cyan")
+        readiness_table.add_column("Status", style="white")
+        
+        # Get RAM info for readiness checks
+        ram_gb = 0
+        if psutil:
+            try:
+                memory = psutil.virtual_memory()
+                ram_gb = memory.total / (1024**3)
+            except:
+                pass
+        
+        # Determine what the system can handle
+        can_run_small = python_ok and not missing_packages
+        can_run_medium = can_run_small and (not psutil or ram_gb >= 8)
+        can_run_large = can_run_medium and gpu_status == "✅ NVIDIA GPU"
+        
+        if can_run_small:
+            readiness_table.add_row(
+                "Small Models (< 500M params)",
+                "✅ Ready (gpt2, distilgpt2, t5-small)"
+            )
+        else:
+            readiness_table.add_row(
+                "Small Models (< 500M params)",
+                "❌ Not ready - Fix issues above"
+            )
+        
+        if can_run_medium:
+            readiness_table.add_row(
+                "Medium Models (500M-3B params)",
+                "✅ Ready (flan-t5-base, pythia-1b)"
+            )
+        else:
+            readiness_table.add_row(
+                "Medium Models (500M-3B params)",
+                "⚠️ Limited - Need 8GB+ RAM"
+            )
+        
+        if can_run_large:
+            readiness_table.add_row(
+                "Large Models (7B+ params)",
+                "✅ Ready (phi-2, mistral-7b with quantization)"
+            )
+        else:
+            readiness_table.add_row(
+                "Large Models (7B+ params)",
+                "⚠️ Limited - GPU recommended"
+            )
+        
+        # Concurrent experiments
+        max_concurrent = 1
+        if psutil and ram_gb >= 16:
+            max_concurrent = 2
+        if psutil and ram_gb >= 32:
+            max_concurrent = 3
+        
+        readiness_table.add_row(
+            "Concurrent Experiments",
+            f"{'✅' if max_concurrent > 1 else '⚠️'} Up to {max_concurrent} recommended"
+        )
+        
+        # Batch processing capability
+        if psutil and ram_gb >= 16:
+            batch_status = "✅ High (32+ samples/batch)"
+        elif psutil and ram_gb >= 8:
+            batch_status = "⚠️ Medium (16 samples/batch)"
+        else:
+            batch_status = "⚠️ Low (1-8 samples/batch)"
+        
+        readiness_table.add_row("Batch Processing", batch_status)
+        
+        self.console.print(readiness_table)
         self.console.print()
 
         # Overall assessment
