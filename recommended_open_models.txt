@@ -1,0 +1,40 @@
+# Recommended Open Models (No Approval Needed)
+# Use these for immediate testing - all are freely accessible
+
+# Small Models (Fast Testing) - 82M to 410M parameters
+gpt2
+distilgpt2
+gpt2-medium
+EleutherAI/pythia-410m
+facebook/opt-350m
+
+# Medium Models (Balanced Quality) - 250M to 1.4B parameters
+google/flan-t5-base
+google/flan-t5-large
+microsoft/phi-1_5
+EleutherAI/pythia-1.4b
+facebook/opt-1.3b
+bigscience/bloomz-560m
+
+# Larger Models (Better Quality) - 1.6B to 2.8B parameters
+microsoft/phi-2
+EleutherAI/pythia-2.8b
+bigscience/bloom-1b7
+stabilityai/stablelm-2-1_6b
+
+# Code-Specialized Models
+Salesforce/codegen-350M-mono
+Salesforce/codegen-2B-mono
+Salesforce/codet5-small
+
+# My Recommended 10-Model Thesis Setup:
+# gpt2
+# gpt2-medium
+# google/flan-t5-base
+# google/flan-t5-large
+# EleutherAI/pythia-410m
+# EleutherAI/pythia-1.4b
+# microsoft/phi-1_5
+# microsoft/phi-2
+# facebook/opt-350m
+# bigscience/bloomz-560m

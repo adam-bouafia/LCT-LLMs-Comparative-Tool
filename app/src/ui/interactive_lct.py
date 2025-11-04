@@ -1950,6 +1950,73 @@ class InteractiveLCT:
             and self.config["algorithms"]
         )
 
+    def _check_model_gated(self, model_id: str) -> tuple[bool, str]:
+        """
+        Check if a model is gated and return status.
+        
+        Returns:
+            tuple: (is_gated, status_text)
+            - is_gated: True if model requires approval
+            - status_text: "🔓 Open", "🔒 Gated", "🔐 Gated (Access)", "❓ Unknown"
+        """
+        try:
+            from huggingface_hub import HfApi
+            
+            token = os.getenv('HF_TOKEN') or os.getenv('HUGGINGFACE_HUB_TOKEN')
+            api = HfApi(token=token)
+            
+            try:
+                # Get model info
+                model_info = api.model_info(model_id, token=token)
+                
+                # Check if gated
+                is_gated = getattr(model_info, 'gated', False)
+                
+                if not is_gated:
+                    return False, "🔓 Open"
+                
+                # Model is gated - check if we have access
+                # Try to check access by looking at cardData or testing download
+                try:
+                    # If we can get detailed info without error, we likely have access
+                    if token:
+                        # Try a lightweight check
+                        from huggingface_hub import hf_hub_download
+                        from huggingface_hub.utils import GatedRepoError
+                        
+                        try:
+                            # Try to check if we can access the repo
+                            # Don't actually download, just check access
+                            hf_hub_download(
+                                repo_id=model_id,
+                                filename="config.json",
+                                token=token,
+                                local_files_only=False,
+                                cache_dir=None
+                            )
+                            return True, "🔐 Gated (Access)"
+                        except GatedRepoError:
+                            return True, "🔒 Gated"
+                        except:
+                            # File might not exist, but no gating error = we have access
+                            return True, "🔐 Gated (Access)"
+                    else:
+                        return True, "🔒 Gated"
+                        
+                except:
+                    return True, "🔒 Gated"
+                    
+            except Exception as e:
+                # If we can't get model info, return unknown
+                if "403" in str(e) or "gated" in str(e).lower():
+                    return True, "🔒 Gated"
+                return False, "❓ Unknown"
+                
+        except ImportError:
+            return False, "❓ Unknown"
+        except Exception:
+            return False, "❓ Unknown"
+
     def search_huggingface_models(self):
         """Search HuggingFace models with pagination"""
         self.console.clear()
@@ -2025,6 +2092,7 @@ class InteractiveLCT:
                 )
                 table.add_column("Option", style="cyan", no_wrap=True)
                 table.add_column("Model ID", style="white")
+                table.add_column("Access", style="bright_cyan", no_wrap=True)
                 table.add_column("Size", style="magenta")
                 table.add_column("Downloads", style="green")
                 table.add_column("Tags", style="yellow")
@@ -2044,9 +2112,19 @@ class InteractiveLCT:
                     else:
                         model_size = self._get_model_size(model_id)
 
-                    table.add_row(str(i), model_id, model_size, f"{downloads:,}", tags)
+                    # Check if model is gated
+                    is_gated, gated_status = self._check_model_gated(model_id)
+
+                    table.add_row(str(i), model_id, gated_status, model_size, f"{downloads:,}", tags)
 
                 self.console.print(table)
+                
+                # Access status legend
+                self.console.print("\n[bold cyan]Access Status:[/bold cyan]")
+                self.console.print("  🔓 [green]Open[/green] - No restrictions, ready to use")
+                self.console.print("  🔒 [yellow]Gated[/yellow] - Requires approval (visit model page)")
+                self.console.print("  🔐 [bright_green]Gated (Access)[/bright_green] - You have access with your HF_TOKEN")
+                self.console.print("  ❓ [dim]Unknown[/dim] - Status could not be determined")
 
                 # Navigation and sorting options
                 self.console.print("\n[bold cyan]Navigation:[/bold cyan]")
@@ -2185,15 +2263,42 @@ class InteractiveLCT:
                 model_ids = [self._get_model_id(m) for m in self.config["models"]]
 
                 if selected_model not in model_ids:
+                    # Check if model is gated
+                    is_gated, gated_status = self._check_model_gated(selected_model)
+                    
+                    # Warn if model is gated without access
+                    if is_gated and "🔒" in gated_status:
+                        self.console.print(f"\n[bold yellow]⚠️  WARNING: {selected_model} is GATED[/bold yellow]")
+                        self.console.print(f"   Status: {gated_status}")
+                        self.console.print(f"   You need to request access at: https://huggingface.co/{selected_model}")
+                        self.console.print(f"   The model will fail to load without approval!")
+                        
+                        confirm = Prompt.ask("\n   Add anyway?", choices=["y", "n"], default="n")
+                        if confirm.lower() != "y":
+                            self.console.print("[dim]Model not added[/dim]")
+                            input("\nPress Enter to continue...")
+                            return
+                    
                     # Get model size
                     model_size = self._get_model_size(selected_model)
 
                     # Store as dict with metadata
-                    model_info = {"id": selected_model, "size": model_size}
+                    model_info = {
+                        "id": selected_model, 
+                        "size": model_size,
+                        "gated": is_gated,
+                        "access_status": gated_status
+                    }
                     self.config["models"].append(model_info)
-                    self.console.print(
-                        f"\n[bold green]✅ Added: {selected_model} ({model_size})[/bold green]"
-                    )
+                    
+                    if is_gated and "Access" in gated_status:
+                        self.console.print(
+                            f"\n[bold green]✅ Added: {selected_model} ({model_size}) - {gated_status}[/bold green]"
+                        )
+                    else:
+                        self.console.print(
+                            f"\n[bold green]✅ Added: {selected_model} ({model_size})[/bold green]"
+                        )
                 else:
                     self.console.print(
                         f"\n[bold yellow]⚠️  Model already selected: {selected_model}[/bold yellow]"
@@ -2535,8 +2640,13 @@ class InteractiveLCT:
             elif choice == "4":
                 # Show API key
                 service = Prompt.ask(
-                    "Which service?", choices=["openai", "huggingface", "anthropic"]
+                    "Which service? (0 to cancel)", 
+                    choices=["openai", "huggingface", "anthropic", "0"]
                 )
+                
+                if service == "0":
+                    continue
+                
                 api_key = manager.get_api_key(service)
 
                 if api_key:
@@ -2560,7 +2670,16 @@ class InteractiveLCT:
                     input("\nPress Enter to continue...")
                     continue
 
-                service = Prompt.ask("Which service to remove?", choices=services)
+                # Add "0" to choices for back option
+                choices_with_back = list(services) + ["0"]
+                service = Prompt.ask(
+                    "Which service to remove? (0 to cancel)", 
+                    choices=choices_with_back
+                )
+                
+                if service == "0":
+                    continue
+                
                 confirm = Prompt.ask(
                     f"Are you sure you want to remove the {service} API key?",
                     choices=["y", "n"],
