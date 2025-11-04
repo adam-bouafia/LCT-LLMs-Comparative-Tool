@@ -299,6 +299,8 @@ class InteractiveLCT:
             "max_length": 150,  # Increased from 50: Modern standard for comprehensive responses
             "temperature": 0.7,
             "energy_profiler": "none",
+            "environmental_tracking": False,
+            "environmental_region": "USA East",  # Default region
             # Removed single "dataset" field - each algorithm will use its appropriate datasets
         }
 
@@ -312,6 +314,19 @@ class InteractiveLCT:
         )
         self.console.print(panel)
         self.console.print()
+    
+    def _get_energy_status(self):
+        """Get energy profiling status for main menu display"""
+        profiler = self.config.get("energy_profiler", "none")
+        env_tracking = self.config.get("environmental_tracking", False)
+        
+        if profiler == "none":
+            return "⚪"
+        elif env_tracking:
+            region = self.config.get("environmental_region", "USA East")
+            return f"✅ ({profiler}+env: {region})"
+        else:
+            return f"✅ ({profiler})"
 
     def main_menu(self):
         """Show the main menu"""
@@ -329,7 +344,11 @@ class InteractiveLCT:
             # Menu options with status - logically organized
             options = [
                 # Core experiment setup
-                ("1", "📝 Set Experiment Name", "✅" if self.config["name"] else "⚪"),
+                (
+                    "1", 
+                    "📝 Set Experiment Name", 
+                    f"✅ ({self.config['name']})" if self.config["name"] else "⚪"
+                ),
                 (
                     "2",
                     "🤖 Select Models",
@@ -361,11 +380,7 @@ class InteractiveLCT:
                 (
                     "6",
                     "⚡ Energy Profiling",
-                    (
-                        f"✅ ({self.config['energy_profiler']})"
-                        if self.config["energy_profiler"] != "none"
-                        else "⚪"
-                    ),
+                    self._get_energy_status(),
                 ),
                 # Configuration management
                 ("7", "💾 Save Configuration", "💾"),
@@ -456,6 +471,12 @@ class InteractiveLCT:
             )
             dataset_info = f"\nDatasets: [blue]{dataset_count} algorithms will use appropriate datasets[/blue]"
 
+        # Get comprehensive energy status
+        energy_status = self.config['energy_profiler']
+        if self.config.get('environmental_tracking', False):
+            region = self.config.get('environmental_region', 'USA East')
+            energy_status = f"{energy_status}+env ({region})"
+        
         config_panel = Panel(
             f"[bold]Current Configuration:[/bold]\n"
             f"Name: [cyan]{self.config['name'] or 'Not set'}[/cyan]\n"
@@ -463,7 +484,7 @@ class InteractiveLCT:
             f"Prompts: [yellow]{len(self.config['prompts'])} selected[/yellow]\n"
             f"Algorithms: [blue]{len(self.config['algorithms'])} selected[/blue]\n"
             f"Repetitions: [magenta]{self.config['repetitions']}[/magenta]\n"
-            f"Energy: [red]{self.config['energy_profiler']}[/red]{dataset_info}",
+            f"Energy: [red]{energy_status}[/red]{dataset_info}",
             title="📊 Status",
             box=box.SIMPLE,
         )
@@ -1551,61 +1572,278 @@ class InteractiveLCT:
             return "Unknown"
 
     def configure_energy_profiling(self):
-        """Configure energy profiling options"""
-        self.console.clear()
-        self.console.print("[bold blue]🔋 Configure Energy Profiling[/bold blue]\n")
+        """Configure energy profiling options with multi-select"""
+        while True:
+            self.console.clear()
+            self.console.print("[bold blue]🔋 Configure Energy Profiling & Environmental Impact[/bold blue]\n")
 
-        # Display CodeCarbon benefits
-        info_panel = Panel(
-            "[bold cyan]⚡ CodeCarbon Energy Profiling[/bold cyan]\n\n"
+            # Show current configuration
+            current_profiler = self.config.get("energy_profiler", "none")
+            current_env = self.config.get("environmental_tracking", False)
+            current_region = self.config.get("environmental_region", "USA East")
+            
+            status_table = Table(title="Current Configuration", box=box.ROUNDED)
+            status_table.add_column("Setting", style="cyan")
+            status_table.add_column("Value", style="white")
+            status_table.add_column("Status", style="green")
+            
+            status_table.add_row(
+                "Energy Profiler",
+                current_profiler.upper(),
+                "✅" if current_profiler != "none" else "⚪"
+            )
+            status_table.add_row(
+                "Environmental Tracking",
+                "Enabled" if current_env else "Disabled",
+                "✅" if current_env else "⚪"
+            )
+            if current_env:
+                status_table.add_row(
+                    "Region",
+                    current_region,
+                    "✅"
+                )
+            
+            self.console.print(status_table)
+            self.console.print()
+
+            # Menu options
+            table = Table(title="Configuration Menu", box=box.ROUNDED)
+            table.add_column("Option", style="cyan", no_wrap=True)
+            table.add_column("Action", style="white")
+            table.add_column("Description", style="dim")
+
+            table.add_row(
+                "1",
+                "Toggle Energy Profiler",
+                f"Current: {current_profiler.upper()} → Switch to {'NONE' if current_profiler == 'codecarbon' else 'CODECARBON'}"
+            )
+            table.add_row(
+                "2",
+                "Toggle Environmental Tracking",
+                f"Current: {'ON' if current_env else 'OFF'} → Switch to {'OFF' if current_env else 'ON'}"
+            )
+            table.add_row(
+                "3",
+                "Select Region",
+                f"Current: {current_region} (Only if environmental tracking is ON)"
+            )
+            table.add_row(
+                "4",
+                "ℹ️  About Features",
+                "Learn about energy profiling and environmental tracking"
+            )
+            table.add_row("0", "Save & Return", "Save configuration and return to main menu")
+
+            self.console.print(table)
+
+            choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4", "0"])
+
+            if choice == "0":
+                # Save and return
+                return
+            elif choice == "1":
+                # Toggle energy profiler
+                if current_profiler == "none":
+                    self.config["energy_profiler"] = "codecarbon"
+                    self.console.print("[green]✅ CodeCarbon energy profiling enabled[/green]")
+                    self.console.print(
+                        "[cyan]📊 Will measure: CPU (RAPL), GPU (nvidia-smi), RAM, and CO2 emissions[/cyan]"
+                    )
+                else:
+                    self.config["energy_profiler"] = "none"
+                    self.config["environmental_tracking"] = False
+                    self.console.print("[yellow]⚪ Energy profiling disabled[/yellow]")
+                    self.console.print("[dim]Note: Environmental tracking also disabled[/dim]")
+                input("\nPress Enter to continue...")
+                
+            elif choice == "2":
+                # Toggle environmental tracking
+                if current_profiler == "none":
+                    self.console.print("[red]❌ Enable CodeCarbon first (Option 1)[/red]")
+                    input("\nPress Enter to continue...")
+                else:
+                    if current_env:
+                        self.config["environmental_tracking"] = False
+                        self.console.print("[yellow]⚪ Environmental tracking disabled[/yellow]")
+                        self.console.print("[dim]Energy profiling still active (energy + CO2 only)[/dim]")
+                    else:
+                        self.config["environmental_tracking"] = True
+                        self.console.print("[green]✅ Environmental tracking enabled[/green]")
+                        self.console.print(
+                            "[cyan]📊 Will track: Water, PUE, Regional Carbon, Eco-Efficiency[/cyan]"
+                        )
+                        # Auto-prompt for region selection
+                        input("\nPress Enter to select your region...")
+                        self._select_region()
+                    input("\nPress Enter to continue...")
+                    
+            elif choice == "3":
+                # Select region
+                if not current_env:
+                    self.console.print("[red]❌ Enable Environmental Tracking first (Option 2)[/red]")
+                    input("\nPress Enter to continue...")
+                else:
+                    self._select_region()
+                    input("\nPress Enter to continue...")
+                    
+            elif choice == "4":
+                # Show information
+                self._show_energy_info()
+                input("\nPress Enter to continue...")
+    
+    def _show_energy_info(self):
+        """Display information about energy profiling and environmental tracking"""
+        self.console.clear()
+        self.console.print("[bold cyan]ℹ️  Energy Profiling & Environmental Impact Information[/bold cyan]\n")
+        
+        # CodeCarbon info
+        codecarbon_panel = Panel(
+            "[bold yellow]🔋 CodeCarbon Energy Profiling[/bold yellow]\n\n"
             "[green]✓[/green] Uses RAPL (Running Average Power Limit) for real CPU energy\n"
             "[green]✓[/green] Hardware-level measurements via /sys/class/powercap\n"
             "[green]✓[/green] NVIDIA GPU support via nvidia-smi\n"
             "[green]✓[/green] Automatic CO2 calculation from grid data\n"
-            "[green]✓[/green] No root/sudo access required\n"
-            "[green]✓[/green] Research-validated accuracy (2025 studies)\n\n"
-            "[dim]Measures actual energy consumption in microjoules (μJ) from hardware counters[/dim]",
-            title="About Energy Profiling",
+            "[green]✓[/green] No root/sudo access required\n\n"
+            "[cyan]Measures:[/cyan] CPU, GPU, RAM energy + Carbon emissions",
+            title="CodeCarbon (Option 1)",
             box=box.ROUNDED,
         )
-        self.console.print(info_panel)
+        self.console.print(codecarbon_panel)
         self.console.print()
-
-        table = Table(title="Energy Profiling Options", box=box.ROUNDED)
-        table.add_column("Option", style="cyan", no_wrap=True)
-        table.add_column("Profiler", style="white")
-        table.add_column("Description", style="dim")
-        table.add_column("Status", style="green")
-
-        current = self.config["energy_profiler"]
-        table.add_row(
-            "1", "None", "No energy profiling", "✅" if current == "none" else "⚪"
+        
+        # Environmental tracking info
+        env_panel = Panel(
+            "[bold yellow]🌍 Environmental Impact Tracking[/bold yellow]\n\n"
+            "[green]✓[/green] Water usage tracking (WUE) - on-site + off-site cooling\n"
+            "[green]✓[/green] Infrastructure overhead (PUE) - data center efficiency\n"
+            "[green]✓[/green] Regional carbon intensity (50+ global regions)\n"
+            "[green]✓[/green] Eco-efficiency scoring for sustainable AI\n\n"
+            "[cyan]Requires:[/cyan] CodeCarbon must be enabled first\n"
+            "[cyan]Adds:[/cyan] Water footprint, PUE multiplier, regional CIF",
+            title="Environmental Tracking (Option 2)",
+            box=box.ROUNDED,
         )
-        table.add_row(
-            "2",
-            "CodeCarbon",
-            "Real energy profiling via RAPL + GPU tracking + CO2 calculation",
-            "✅" if current == "codecarbon" else "⚪",
-        )
-        table.add_row("0", "Back to main menu", "", "")
-
-        self.console.print(table)
-
-        choice = Prompt.ask("Choose energy profiler", choices=["1", "2", "0"])
-
-        if choice == "0":
-            return
-        elif choice == "1":
-            self.config["energy_profiler"] = "none"
-            self.console.print("[green]✅ Energy profiling disabled[/green]")
-        elif choice == "2":
-            self.config["energy_profiler"] = "codecarbon"
-            self.console.print("[green]✅ CodeCarbon profiling enabled[/green]")
-            self.console.print(
-                "[cyan]📊 Will measure: CPU (RAPL), GPU (nvidia-smi), RAM, and CO2 emissions[/cyan]"
-            )
-
-        input("\nPress Enter to continue...")
+        self.console.print(env_panel)
+        self.console.print()
+        
+        # Example combinations
+        combo_table = Table(title="Example Configurations", box=box.ROUNDED)
+        combo_table.add_column("CodeCarbon", style="cyan")
+        combo_table.add_column("Environmental", style="cyan")
+        combo_table.add_column("What You Get", style="white")
+        
+        combo_table.add_row("OFF", "OFF", "No tracking")
+        combo_table.add_row("ON", "OFF", "Energy + CO2 only")
+        combo_table.add_row("ON", "ON", "Full impact: Energy + Water + Carbon + PUE + Eco-Efficiency")
+        
+        self.console.print(combo_table)
+    
+    def _select_region(self):
+        """Select geographic region for environmental impact calculations"""
+        from app.src.llm_runner.profiling import Region
+        
+        self.console.clear()
+        self.console.print("[bold blue]🌍 Select Geographic Region[/bold blue]\n")
+        
+        # Group regions by area
+        regions_by_area = {
+            "North America": [
+                (Region.USA_EAST, "USA East Coast"),
+                (Region.USA_WEST, "USA West Coast"),
+                (Region.USA_CENTRAL, "USA Central"),
+                (Region.CANADA_EAST, "Canada East"),
+                (Region.CANADA_WEST, "Canada West"),
+                (Region.MEXICO, "Mexico"),
+            ],
+            "Europe - West": [
+                (Region.EUROPE_WEST, "Europe West"),
+                (Region.UK, "United Kingdom"),
+                (Region.IRELAND, "Ireland"),
+                (Region.FRANCE, "France (Nuclear-heavy, low carbon)"),
+                (Region.GERMANY, "Germany"),
+                (Region.NETHERLANDS, "Netherlands"),
+                (Region.SWITZERLAND, "Switzerland"),
+            ],
+            "Europe - North": [
+                (Region.EUROPE_NORTH, "Europe North"),
+                (Region.NORDICS, "Nordic Countries (Clean energy)"),
+                (Region.ICELAND, "Iceland (Geothermal, cleanest)"),
+            ],
+            "Europe - East & South": [
+                (Region.EUROPE_EAST, "Europe East"),
+                (Region.EUROPE_SOUTH, "Europe South"),
+            ],
+            "Asia Pacific - China": [
+                (Region.CHINA_NORTH, "China North"),
+                (Region.CHINA_EAST, "China East"),
+                (Region.CHINA_SOUTH, "China South"),
+            ],
+            "Asia Pacific - Other": [
+                (Region.JAPAN, "Japan"),
+                (Region.KOREA, "South Korea"),
+                (Region.SINGAPORE, "Singapore"),
+                (Region.AUSTRALIA_EAST, "Australia East"),
+                (Region.AUSTRALIA_SOUTHEAST, "Australia Southeast"),
+            ],
+            "India": [
+                (Region.INDIA_WEST, "India West"),
+                (Region.INDIA_SOUTH, "India South"),
+                (Region.INDIA_CENTRAL, "India Central"),
+            ],
+            "Middle East & Africa": [
+                (Region.UAE, "United Arab Emirates"),
+                (Region.SAUDI_ARABIA, "Saudi Arabia"),
+                (Region.SOUTH_AFRICA, "South Africa"),
+            ],
+            "South America": [
+                (Region.BRAZIL_SOUTH, "Brazil South"),
+                (Region.BRAZIL_SOUTHEAST, "Brazil Southeast"),
+            ],
+            "Custom": [
+                (Region.CUSTOM, "Custom (define your own multipliers)"),
+            ],
+        }
+        
+        # Display regions by area
+        all_choices = []
+        choice_to_region = {}
+        idx = 1
+        
+        for area, regions in regions_by_area.items():
+            self.console.print(f"\n[bold cyan]{area}:[/bold cyan]")
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            table.add_column("Option", style="yellow")
+            table.add_column("Region", style="white")
+            
+            for region_enum, region_name in regions:
+                choice_str = str(idx)
+                all_choices.append(choice_str)
+                choice_to_region[choice_str] = region_enum
+                current = self.config.get("environmental_region")
+                status = "✅" if current == region_enum.value else ""
+                table.add_row(f"{idx}.", f"{region_name} {status}")
+                idx += 1
+            
+            self.console.print(table)
+        
+        all_choices.append("0")
+        self.console.print("\n[dim]0. Back[/dim]\n")
+        
+        choice = Prompt.ask("Select your region", choices=all_choices)
+        
+        if choice != "0":
+            selected_region = choice_to_region[choice]
+            self.config["environmental_region"] = selected_region.value
+            
+            # Show selected region info
+            from app.src.llm_runner.profiling import EnvironmentalMultipliers
+            multipliers = EnvironmentalMultipliers.get_regional_defaults(selected_region)
+            
+            self.console.print(f"\n[green]✅ Selected: {selected_region.value}[/green]")
+            self.console.print(f"[dim]   PUE: {multipliers.pue} | "
+                             f"WUE: {multipliers.wue_site + multipliers.wue_source:.2f} L/kWh | "
+                             f"Carbon: {multipliers.cif} kgCO2e/kWh[/dim]")
 
     def save_configuration(self):
         """Save current configuration to file"""
@@ -4487,10 +4725,11 @@ def create_experiment_from_config(config: Dict[str, Any]) -> str:
 
     console = Console()
 
-    console.print("[dim]→ Validating configuration...[/dim]")
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(project_root), env=env
-    )
+    with console.status("[bold yellow]→ Validating configuration...[/bold yellow]", spinner="dots"):
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=str(project_root), env=env,
+            stdin=subprocess.DEVNULL  # Prevent hanging on interactive prompts
+        )
 
     console.print("[dim]→ Writing experiment files...[/dim]")
 

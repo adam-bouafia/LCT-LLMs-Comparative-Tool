@@ -3,6 +3,11 @@ Energy Tracker Module
 
 Provides granular energy consumption tracking for LLM evaluation pipeline stages.
 Tracks energy usage per stage: dataset loading, model initialization, inference, and metric computation.
+
+Enhanced with comprehensive environmental impact tracking:
+- Water Usage Effectiveness (WUE) - on-site and off-site water consumption
+- Power Usage Effectiveness (PUE) - data center infrastructure overhead
+- Eco-Efficiency Scoring - performance per unit of environmental cost
 """
 
 import time
@@ -11,6 +16,14 @@ from typing import Dict, Optional, List, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+from .environmental_impact import (
+    EnvironmentalImpactCalculator,
+    EnvironmentalImpact,
+    EcoEfficiencyScore,
+    Region,
+    EnvironmentalMultipliers
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +124,19 @@ class EnergyTracker:
     - Total consumption
     """
 
-    def __init__(self, profiler_type: str = "none"):
+    def __init__(
+        self,
+        profiler_type: str = "none",
+        region: Region = Region.USA_EAST,
+        enable_environmental_tracking: bool = True
+    ):
         """
         Initialize energy tracker.
 
         Args:
             profiler_type: Type of energy profiler (codecarbon, none)
+            region: Geographic region for environmental multipliers
+            enable_environmental_tracking: Enable water, PUE, and eco-efficiency tracking
         """
         self.profiler_type = profiler_type
         self.stage_measurements: Dict[EnergyStage, List[EnergyMeasurement]] = {
@@ -127,6 +147,14 @@ class EnergyTracker:
         self.current_stage: Optional[EnergyStage] = None
         self.current_measurement: Optional[EnergyMeasurement] = None
         self.emissions_tracker = None
+        
+        # Environmental impact tracking
+        self.enable_environmental_tracking = enable_environmental_tracking
+        self.environmental_calculator: Optional[EnvironmentalImpactCalculator] = None
+        
+        if enable_environmental_tracking:
+            self.environmental_calculator = EnvironmentalImpactCalculator(region=region)
+            logger.info(f"Environmental tracking enabled for region: {region.value}")
 
         logger.info(f"Energy tracker initialized with profiler: {profiler_type}")
 
@@ -315,7 +343,7 @@ class EnergyTracker:
         Generate comprehensive energy report.
 
         Returns:
-            Complete energy consumption report
+            Complete energy consumption report with environmental impact
         """
         total_energy = sum(
             sum(m.energy_joules for m in measurements)
@@ -327,7 +355,7 @@ class EnergyTracker:
         )
         avg_power = total_energy / total_duration if total_duration > 0 else 0.0
 
-        return {
+        report = {
             "profiler_type": self.profiler_type,
             "stages": {
                 stage.value: self.get_stage_summary(stage) for stage in EnergyStage
@@ -338,9 +366,141 @@ class EnergyTracker:
             "total_duration_seconds": total_duration,
             "avg_power_watts": avg_power,
         }
+        
+        # Add environmental impact if tracking is enabled
+        if self.enable_environmental_tracking and self.environmental_calculator:
+            env_impact = self.get_environmental_impact()
+            if env_impact:
+                report["environmental_impact"] = env_impact.to_dict()
+                report["environmental_impact_human_readable"] = env_impact.get_human_readable_summary()
+        
+        return report
+    
+    def get_environmental_impact(self) -> Optional[EnvironmentalImpact]:
+        """
+        Calculate comprehensive environmental impact for total energy consumption.
+        
+        Returns:
+            EnvironmentalImpact with water, PUE-adjusted energy, and carbon metrics
+        """
+        if not self.enable_environmental_tracking or not self.environmental_calculator:
+            return None
+        
+        # Calculate total energy in kWh
+        total_energy_joules = sum(
+            sum(m.energy_joules for m in measurements)
+            for measurements in self.stage_measurements.values()
+        )
+        energy_kwh = total_energy_joules / 3_600_000  # Convert J to kWh
+        
+        # Get total carbon emissions from measurements
+        total_carbon_kg = sum(
+            sum(m.emissions_kg_co2 for m in measurements)
+            for measurements in self.stage_measurements.values()
+        )
+        
+        # Calculate comprehensive environmental impact
+        impact = self.environmental_calculator.calculate_impact(
+            energy_kwh=energy_kwh,
+            carbon_kg=total_carbon_kg if total_carbon_kg > 0 else None
+        )
+        
+        return impact
+    
+    def get_eco_efficiency_score(
+        self,
+        accuracy_score: Optional[float] = None,
+        throughput_tokens_per_sec: Optional[float] = None,
+        latency_seconds: Optional[float] = None
+    ) -> Optional[EcoEfficiencyScore]:
+        """
+        Calculate eco-efficiency score balancing performance vs environmental cost.
+        
+        Args:
+            accuracy_score: Model accuracy (0-1 or 0-100)
+            throughput_tokens_per_sec: Tokens generated per second
+            latency_seconds: Average latency in seconds
+        
+        Returns:
+            EcoEfficiencyScore with calculated efficiency metric
+        """
+        if not self.enable_environmental_tracking or not self.environmental_calculator:
+            return None
+        
+        impact = self.get_environmental_impact()
+        if not impact:
+            return None
+        
+        eco_score = self.environmental_calculator.calculate_eco_efficiency(
+            impact=impact,
+            accuracy_score=accuracy_score,
+            throughput_tokens_per_sec=throughput_tokens_per_sec,
+            latency_seconds=latency_seconds
+        )
+        
+        return eco_score
+    
+    def get_scaled_impact_projection(
+        self,
+        queries_per_day: int,
+        days: int = 365
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Project environmental impact at scale (e.g., production deployment).
+        
+        Args:
+            queries_per_day: Number of queries per day
+            days: Number of days to project (default: 365 for annual)
+        
+        Returns:
+            Dictionary with scaled impact and human-readable equivalents
+        """
+        if not self.enable_environmental_tracking or not self.environmental_calculator:
+            return None
+        
+        per_query_impact = self.get_environmental_impact()
+        if not per_query_impact:
+            return None
+        
+        scaled_impact, equivalents = self.environmental_calculator.calculate_scaled_impact(
+            per_query_impact=per_query_impact,
+            queries_per_day=queries_per_day,
+            days=days
+        )
+        
+        return {
+            "scaled_impact": scaled_impact.to_dict(),
+            "equivalents": equivalents
+        }
+    
+    def set_region(self, region: Region) -> None:
+        """
+        Update environmental tracking region and multipliers.
+        
+        Args:
+            region: New geographic region
+        """
+        if self.environmental_calculator:
+            self.environmental_calculator.set_region(region)
+            logger.info(f"Updated environmental tracking region to: {region.value}")
+    
+    def set_custom_multipliers(self, multipliers: EnvironmentalMultipliers) -> None:
+        """
+        Set custom environmental multipliers.
+        
+        Args:
+            multipliers: Custom EnvironmentalMultipliers instance
+        """
+        if self.environmental_calculator:
+            self.environmental_calculator.set_multipliers(multipliers)
+            logger.info("Updated environmental multipliers with custom values")
 
     def _start_codecarbon_stage(self) -> None:
         """Start CodeCarbon tracking for current stage."""
+        if self.current_stage is None:
+            logger.warning("Cannot start CodeCarbon: no current stage set")
+            return
+
         try:
             from codecarbon import EmissionsTracker
 
@@ -348,7 +508,7 @@ class EnergyTracker:
                 project_name=f"stage_{self.current_stage.value}",
                 measure_power_secs=1,
                 save_to_file=False,
-                logging_logger=logger,
+                logging_logger=logger,  # type: ignore[arg-type]
             )
             self.emissions_tracker.start()
         except Exception as e:
