@@ -4,7 +4,7 @@
 # ============================================================================
 # Stage 1: Base Image with System Dependencies
 # ============================================================================
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 LABEL maintainer="Adam Bouafia <a.bouafia@student.vu.nl>"
 LABEL description="LLM Comparative Tool with Environmental Tracking"
@@ -44,7 +44,7 @@ WORKDIR /app
 # ============================================================================
 # Stage 2: Dependencies Installation
 # ============================================================================
-FROM base as dependencies
+FROM base AS dependencies
 
 # Copy requirements first (for layer caching)
 COPY --chown=lct:lct config/requirements.txt /app/config/
@@ -61,7 +61,7 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); 
 # ============================================================================
 # Stage 3: Application
 # ============================================================================
-FROM dependencies as application
+FROM dependencies AS application
 
 # Copy application code
 COPY --chown=lct:lct . /app/

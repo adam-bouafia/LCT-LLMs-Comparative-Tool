@@ -4831,7 +4831,7 @@ with modern interactive features and comprehensive LLM evaluation capabilities.
 
                     def show_heartbeat():
                         """Show a spinning indicator if no output for a while"""
-                        nonlocal heartbeat_idx, last_output_time
+                        nonlocal heartbeat_idx
                         current_time = time.time()
                         if (
                             current_time - last_output_time > 5

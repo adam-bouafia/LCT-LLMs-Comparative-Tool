@@ -1373,8 +1373,6 @@ class CodeGenerationAlgorithm(ComparisonAlgorithm):
 
         return passed
 
-        return min(100.0, score)
-
     def _check_syntax(self, response: str) -> bool:
         """Check if response contains syntactically valid code."""
         # Extract code blocks
