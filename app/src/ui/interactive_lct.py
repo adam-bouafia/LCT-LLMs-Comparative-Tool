@@ -4736,8 +4736,9 @@ with modern interactive features and comprehensive LLM evaluation capabilities.
             experiment_path = create_experiment_from_config(config_dict)
 
             self.console.print(
-                f"[green]✅ Experiment created at: {experiment_path}[/green]"
+                f"[green]✅ Experiment created successfully![/green]"
             )
+            self.console.print(f"[dim]   Configuration: {experiment_path}[/dim]")
             self.console.print()
 
             if Confirm.ask("Run the experiment now?"):
@@ -4771,7 +4772,16 @@ with modern interactive features and comprehensive LLM evaluation capabilities.
 
                 # Find project root (go up from app/src/ui to project root)
                 project_root = Path(__file__).parent.parent.parent.parent
-                venv_python = project_root / "llm-experiment-runner/.venv/bin/python"
+                
+                # Check for venv in multiple locations (prefer root .venv)
+                if (project_root / ".venv/bin/python").exists():
+                    venv_python = project_root / ".venv/bin/python"
+                elif (project_root / "llm-experiment-runner/.venv/bin/python").exists():
+                    venv_python = project_root / "llm-experiment-runner/.venv/bin/python"
+                else:
+                    # Fallback to system python
+                    import sys
+                    venv_python = Path(sys.executable)
 
                 # Set environment to include the app/src directory in Python path
                 env = os.environ.copy()
@@ -4982,6 +4992,7 @@ def create_experiment_from_config(config: Dict[str, Any]) -> str:
         str(config["max_length"]),
         "--temperature",
         str(config["temperature"]),
+        "--yes",  # Auto-confirm prompts (skip interactive confirmations)
     ]
 
     if config.get("energy_profiler") and config["energy_profiler"] != "none":
@@ -5014,14 +5025,29 @@ def create_experiment_from_config(config: Dict[str, Any]) -> str:
 
     # Extract experiment path from output
     lines = result.stdout.strip().split("\n")
-    for line in lines:
+    
+    # Find "Configuration:" line and handle wrapped paths
+    for i, line in enumerate(lines):
         if "Configuration:" in line:
-            return line.split(":", 1)[1].strip()
+            # Get the path after "Configuration:"
+            path_part = line.split(":", 1)[1].strip()
+            
+            # Check if the next line continues the path (doesn't start with a new label)
+            if i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                # If next line doesn't have a colon (not a new label), it's a continuation
+                if next_line and ":" not in next_line:
+                    # Add space before joining to preserve path structure
+                    path_part = path_part + " " + next_line
+            
+            # Resolve to absolute path if needed
+            if not path_part.startswith("/"):
+                path_part = str(project_root / path_part)
+            
+            return path_part
 
-    # Fallback - construct path
-    return str(
-        Path(__file__).parent / "experiments" / config["name"] / "RunnerConfig.py"
-    )
+    # Fallback - construct path from project root
+    return str(project_root / "experiments" / config["name"] / "RunnerConfig.py")
 
 
 def main():

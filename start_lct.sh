@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 # Get the absolute path of the project directory
 PROJECT_DIR="$(pwd)"
 
-# Set HuggingFace environment variables to suppress warnings
+# Set HuggingFace environment variables
 export HF_HOME="${PROJECT_DIR}/data/huggingface"
 export HF_DATASETS_CACHE="${PROJECT_DIR}/data/huggingface/datasets"
 export HF_MODELS_CACHE="${PROJECT_DIR}/data/huggingface/models"

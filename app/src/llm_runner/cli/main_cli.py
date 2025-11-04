@@ -619,6 +619,12 @@ def info(model_id, save):
     is_flag=True,
     help="Enable energy profiling with CodeCarbon",
 )
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Auto-confirm all prompts (skip interactive confirmations)",
+)
 def init(
     name,
     models,
@@ -634,6 +640,7 @@ def init(
     temperature,
     energy_profiler,
     energy_profiling,
+    yes,
 ):
     """Initialize a new LLM comparison experiment."""
 
@@ -827,7 +834,10 @@ def init(
             f"\n[dim]These algorithms will be skipped if API keys are not provided.[/dim]"
         )
 
-        if not click.confirm("\nContinue without these algorithms?", default=True):
+        # Auto-confirm if --yes flag is used, otherwise prompt
+        should_continue = yes or click.confirm("\nContinue without these algorithms?", default=True)
+        
+        if not should_continue:
             console.print("[yellow]Experiment initialization cancelled.[/yellow]")
             return
 
@@ -875,7 +885,7 @@ class RunnerConfig({config_class}):
     
     # Experiment configuration
     name = "{name}"
-    results_output_path = Path(__file__).parent / "{output_path.name}"
+    results_output_path = Path(__file__).parent
     
     # Model configuration
     model_ids = {model_ids}
@@ -961,7 +971,7 @@ class RunnerConfig({config_class}):
 def run(config_file, dry_run):
     """Run an LLM comparison experiment."""
 
-    config_path = Path(config_file)
+    config_path = Path(config_file).resolve()  # Convert to absolute path
 
     if dry_run:
         console.print(f"[yellow]DRY RUN - Would execute: {config_path}[/yellow]")
@@ -988,7 +998,7 @@ def run(config_file, dry_run):
         else:
             env["PYTHONPATH"] = str(app_src_path)
 
-        # Run the experiment using the Python module
+        # Run the experiment using the Python module with absolute path
         cmd = [sys.executable, "-m", "experiment_runner", str(config_path)]
 
         console.print(f"[dim]Executing: {' '.join(cmd)}[/dim]")

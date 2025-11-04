@@ -319,13 +319,19 @@ class SemanticSimilarityAlgorithm(ComparisonAlgorithm):
             name="SemanticSimilarity",
             description="Semantic similarity comparison using embeddings",
         )
-        self.model = None
-        try:
-            from sentence_transformers import SentenceTransformer
+        self._model = None  # Lazy initialization
 
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
-        except ImportError:
-            pass
+    def _get_model(self):
+        """Lazy load the model only when first needed."""
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer("all-MiniLM-L6-v2")
+            except ImportError:
+                raise RuntimeError(
+                    "sentence-transformers not available - install it with: pip install sentence-transformers"
+                )
+        return self._model
 
     def compare(
         self, responses: List[ModelResponse], reference_data: Optional[List[str]] = None
@@ -343,6 +349,9 @@ class SemanticSimilarityAlgorithm(ComparisonAlgorithm):
 
         try:
             from sentence_transformers.util import cos_sim
+            
+            # Lazy load model on first use
+            model = self._get_model()
 
             for i, response in enumerate(responses):
                 start_time = time.time()
@@ -353,10 +362,8 @@ class SemanticSimilarityAlgorithm(ComparisonAlgorithm):
                 )
 
                 # Calculate embeddings
-                if self.model is None:
-                    raise RuntimeError("Sentence transformer model not initialized")
-                response_embedding = self.model.encode(response.response)
-                reference_embedding = self.model.encode(reference)
+                response_embedding = model.encode(response.response)
+                reference_embedding = model.encode(reference)
 
                 # Calculate cosine similarity
                 similarity = cos_sim(response_embedding, reference_embedding).item()
@@ -390,10 +397,10 @@ class SemanticSimilarityAlgorithm(ComparisonAlgorithm):
         return results
 
     def is_available(self) -> bool:
+        """Check if sentence-transformers is available (without loading the model)."""
         try:
             import sentence_transformers
-
-            return self.model is not None
+            return True
         except ImportError:
             return False
 
@@ -482,15 +489,21 @@ class STSAlgorithm(ComparisonAlgorithm):
             name="SemanticTextualSimilarity",
             description="Semantic Textual Similarity using Sentence-BERT",
         )
-        self.model = None
-        try:
-            from sentence_transformers import SentenceTransformer
+        self._model = None  # Lazy initialization
 
-            self.model = SentenceTransformer(
-                "all-mpnet-base-v2"
-            )  # Better than MiniLM for STS
-        except ImportError:
-            pass
+    def _get_model(self):
+        """Lazy load the model only when first needed."""
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer(
+                    "all-mpnet-base-v2"
+                )  # Better than MiniLM for STS
+            except ImportError:
+                raise RuntimeError(
+                    "sentence-transformers not available - install it with: pip install sentence-transformers"
+                )
+        return self._model
 
     def compare(
         self, responses: List[ModelResponse], reference_data: Optional[List[str]] = None
@@ -506,6 +519,9 @@ class STSAlgorithm(ComparisonAlgorithm):
 
         try:
             from sentence_transformers.util import cos_sim
+            
+            # Lazy load model on first use
+            model = self._get_model()
 
             for i, response in enumerate(responses):
                 start_time = time.time()
@@ -515,12 +531,10 @@ class STSAlgorithm(ComparisonAlgorithm):
                 )
 
                 # Calculate embeddings
-                if self.model is None:
-                    raise RuntimeError("Model not initialized for semantic similarity")
-                response_embedding = self.model.encode(
+                response_embedding = model.encode(
                     response.response, convert_to_tensor=True
                 )
-                reference_embedding = self.model.encode(
+                reference_embedding = model.encode(
                     reference, convert_to_tensor=True
                 )
 
@@ -553,10 +567,10 @@ class STSAlgorithm(ComparisonAlgorithm):
         return results
 
     def is_available(self) -> bool:
+        """Check if sentence-transformers is available (without loading the model)."""
         try:
             import sentence_transformers
-
-            return self.model is not None
+            return True
         except ImportError:
             return False
 
