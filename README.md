@@ -21,12 +21,38 @@ A comprehensive tool for comparing Large Language Models across multiple evaluat
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### 🐳 Option 1: Docker (Recommended)
 
+The fastest way to get started - no installation required!
+
+```bash
+# Pull and run the latest version
+docker pull adambouafia/lct:latest
+docker run -it --rm adambouafia/lct:latest
+```
+
+**With data persistence:**
+```bash
+docker run -it --rm \
+  -v $(pwd)/experiments:/app/experiments \
+  -v $(pwd)/saved_configs:/app/saved_configs \
+  adambouafia/lct:latest
+```
+
+**Or use Docker Compose:**
+```bash
+git clone https://github.com/adam-bouafia/LCT-LLMs-Comparative-Tool.git
+cd LCT-LLMs-Comparative-Tool
+docker-compose up
+```
+
+### 💻 Option 2: Local Installation
+
+**Prerequisites:**
 - Python 3.8 or higher
 - Git
 
-### Installation
+**Installation:**
 
 1. **Clone the repository**
 
@@ -124,7 +150,7 @@ All algorithms are backed by established research datasets for scientific validi
     - Datasets: **HH-RLHF** (Anthropic Helpful & Harmless - 170K conversations)
     - Tests model safety, helpfulness, and robustness to adversarial inputs
 
-## 🐳 Docker Deployment
+## 🔋 Energy Profiling & Environmental Impact## 🐳 Docker Deployment
 
 LCT is available as a Docker image for easy deployment without cloning the repository.
 

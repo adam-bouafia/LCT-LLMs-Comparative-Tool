@@ -78,6 +78,9 @@ env/
 venv/
 ENV/
 env.bak/
+
+# Maintainer-only scripts (not for users)
+docker-push.sh
 venv.bak/
 
 # Spyder project settings
