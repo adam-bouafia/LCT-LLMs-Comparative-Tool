@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+  lct:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lct:latest
+    container_name: lct-tool
+
+    # Interactive mode for CLI
+    stdin_open: true
+    tty: true
+
+    # Environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - HF_HOME=/data/huggingface
+      - TRANSFORMERS_CACHE=/data/huggingface/transformers
+      - HF_DATASETS_CACHE=/data/huggingface/datasets
+      - TORCH_HOME=/data/models
+      # Optional: Add your HuggingFace token
+      # - HF_TOKEN=your_token_here
+
+    # Volume mounts for data persistence
+    volumes:
+      # Persistent data
+      - huggingface_cache:/data/huggingface
+      - models_cache:/data/models
+      - datasets_cache:/data/datasets
+      # Experiment results
+      - ./experiments:/app/experiments
+      - ./saved_configs:/app/saved_configs
+      # Logs
+      - ./logs:/app/logs
+      # Optional: Mount your own data
+      # - ./my_data:/app/data/custom
+
+    # Resource limits (adjust based on your hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 4G
+
+    # Network configuration
+    networks:
+      - lct-network
+
+    # Privileged mode for energy profiling (RAPL access)
+    # Comment out if you don't need energy profiling
+    privileged: true
+
+    # GPU support (uncomment if you have NVIDIA GPU)
+    # runtime: nvidia
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Command override (optional)
+    # command: python app/src/ui/interactive_lct.py
+
+# Named volumes for caching
+volumes:
+  huggingface_cache:
+    driver: local
+  models_cache:
+    driver: local
+  datasets_cache:
+    driver: local
+
+# Network
+networks:
+  lct-network:
+    driver: bridge

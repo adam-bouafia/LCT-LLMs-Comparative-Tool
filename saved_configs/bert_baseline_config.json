@@ -1,0 +1,37 @@
+{
+  "name": "omega",
+  "models": [
+    {
+      "id": "google-bert/bert-base-uncased",
+      "size": "420.0 MB"
+    }
+  ],
+  "prompts": [
+    "Hello, how are you?",
+    "What's your name?",
+    "Nice to meet you!",
+    "How's your day going?",
+    "Tell me about yourself"
+  ],
+  "algorithms": [
+    "response_time",
+    "token_throughput",
+    "text_length",
+    "bleu",
+    "rouge",
+    "bert_score",
+    "semantic_similarity",
+    "llm_as_judge",
+    "pairwise_comparison",
+    "safety_alignment",
+    "code_generation",
+    "mathematical_reasoning",
+    "commonsense_reasoning",
+    "truthfulness"
+  ],
+  "repetitions": 1,
+  "max_length": 150,
+  "temperature": 0.7,
+  "energy_profiler": "codecarbon",
+  "dataset": "0"
+}

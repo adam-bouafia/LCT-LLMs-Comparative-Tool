@@ -3,19 +3,21 @@
 # This script properly sets up the environment and runs the LCT CLI
 
 # Set the working directory to the experiment runner root
-cd "/home/neo/Documents/experiment runner"
+cd "$(dirname "$0")"
 
+# Get the absolute path of the project directory
+PROJECT_DIR="$(pwd)"
 
 # Set HuggingFace environment variables to suppress warnings
-export HF_HOME="/home/neo/Documents/experiment runner/data/huggingface"
-export HF_DATASETS_CACHE="/home/neo/Documents/experiment runner/data/huggingface/datasets"
-export HF_MODELS_CACHE="/home/neo/Documents/experiment runner/data/huggingface/models"
-export TRANSFORMERS_CACHE="/home/neo/Documents/experiment runner/data/huggingface/transformers"
+export HF_HOME="${PROJECT_DIR}/data/huggingface"
+export HF_DATASETS_CACHE="${PROJECT_DIR}/data/huggingface/datasets"
+export HF_MODELS_CACHE="${PROJECT_DIR}/data/huggingface/models"
+export TRANSFORMERS_CACHE="${PROJECT_DIR}/data/huggingface/transformers"
 export TRANSFORMERS_VERBOSITY=error
 export DATASETS_VERBOSITY=error
 
 # Set PYTHONPATH to include the app/src directory for module imports
-export PYTHONPATH="/home/neo/Documents/experiment runner/app/src"
+export PYTHONPATH="${PROJECT_DIR}/app/src"
 
 # Check if virtual environment exists
 if [ ! -d "llm-experiment-runner/.venv" ]; then

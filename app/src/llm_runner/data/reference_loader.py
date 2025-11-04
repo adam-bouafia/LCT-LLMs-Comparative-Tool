@@ -563,8 +563,8 @@ class ReferenceDataLoader:
             return []
         
         try:
-            # Load TruthfulQA multiple choice format
-            dataset = load_dataset('EleutherAI/truthful_qa_mc', split='validation', cache_dir=self.cache_dir)
+            # Load TruthfulQA with the generation configuration (works with new HF format)
+            dataset = load_dataset('truthful_qa', 'generation', split='validation', cache_dir=self.cache_dir)
             
             data_points = []
             for i, item in enumerate(dataset):
@@ -577,6 +577,8 @@ class ReferenceDataLoader:
                     'correct_answers': item.get('correct_answers', []),
                     'incorrect_answers': item.get('incorrect_answers', []),
                     'category': item.get('category', 'general'),
+                    'type': item.get('type', 'unknown'),
+                    'source': item.get('source', 'truthfulqa'),
                     'problem_id': f'truthfulqa_{i}'
                 })
             
@@ -594,12 +596,21 @@ class ReferenceDataLoader:
             return []
         
         try:
-            # Try to load AlpacaEval dataset
-            dataset = load_dataset('tatsu-lab/alpaca_eval', cache_dir=self.cache_dir)
+            # Load AlpacaEval data directly from the JSON file since the script is deprecated
+            logger.info("Loading AlpacaEval dataset from direct JSON file")
             
-            # Handle different dataset structures
-            if isinstance(dataset, dict):
-                dataset = dataset.get('eval', dataset.get('test', list(dataset.values())[0]))
+            # Load the main alpaca_eval.json file directly
+            dataset = load_dataset(
+                'json', 
+                data_files='hf://datasets/tatsu-lab/alpaca_eval/alpaca_eval.json',
+                cache_dir=self.cache_dir
+            )
+            
+            # Extract the train split (should be the main data)
+            if isinstance(dataset, dict) and 'train' in dataset:
+                dataset = dataset['train']
+            elif isinstance(dataset, dict):
+                dataset = list(dataset.values())[0]
             
             data_points = []
             for i, item in enumerate(dataset):
@@ -607,10 +618,10 @@ class ReferenceDataLoader:
                     break
                     
                 data_points.append({
-                    'instruction': item.get('instruction', item.get('prompt', '')),
-                    'output': item.get('output', item.get('response', '')),
+                    'instruction': item.get('instruction', ''),
+                    'output': item.get('output', ''),
                     'generator': item.get('generator', 'unknown'),
-                    'instruction_id': item.get('instruction_id', f'alpaca_{i}'),
+                    'dataset': item.get('dataset', 'alpaca_eval'),
                     'problem_id': f'alpacaeval_{i}'
                 })
             
@@ -618,9 +629,59 @@ class ReferenceDataLoader:
             return data_points
             
         except Exception as e:
-            logger.error(f"Failed to load AlpacaEval data: {e}")
+            logger.warning(f"Failed to load AlpacaEval data: {e}. Will use heuristic evaluation.")
             return []
     
+    def load_arena_preference_data(self, max_samples: int = 1000) -> List[Dict[str, Any]]:
+        """
+        Load arena human preference dataset for RLHF evaluation.
+        
+        Args:
+            max_samples: Maximum number of preference pairs to load
+            
+        Returns:
+            List of preference comparison data
+        """
+        if not DATASETS_AVAILABLE:
+            logger.warning("datasets library not available for arena preference data")
+            return []
+        
+        try:
+            logger.info(f"Loading arena human preference data (max {max_samples} samples)...")
+            
+            # Load the arena human preference dataset
+            dataset = load_dataset(
+                "lmarena-ai/arena-human-preference-55k",
+                split=f"train[:{max_samples}]"
+            )
+            
+            preference_data = []
+            for item in dataset:
+                # Safe dataset item access with fallbacks
+                try:
+                    preference_data.append({
+                        'prompt': getattr(item, 'prompt', ''),
+                        'response_a': getattr(item, 'response_a', ''),
+                        'response_b': getattr(item, 'response_b', ''),
+                        'winner': getattr(item, 'winner', 'tie'),
+                        'judge': getattr(item, 'judge', 'human'),
+                        'metadata': {
+                            'model_a': getattr(item, 'model_a', 'unknown'),
+                            'model_b': getattr(item, 'model_b', 'unknown'),
+                            'conversation_length': 1
+                        }
+                    })
+                except (KeyError, TypeError, AttributeError):
+                    # Skip malformed items
+                    continue
+            
+            logger.info(f"Successfully loaded {len(preference_data)} arena preference examples")
+            return preference_data
+            
+        except Exception as e:
+            logger.warning(f"Failed to load arena preference data: {e}")
+            return []
+
     def validate_all_loaders(self) -> Dict[str, bool]:
         """
         Validate that all expected dataset loader methods are available.

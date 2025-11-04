@@ -124,7 +124,229 @@ All algorithms are backed by established research datasets for scientific validi
     - Datasets: **HH-RLHF** (Anthropic Helpful & Harmless - 170K conversations)
     - Tests model safety, helpfulness, and robustness to adversarial inputs
 
-## 🔋 Energy Profiling & Environmental Impact
+## 🐳 Docker Deployment
+
+LCT is available as a Docker image for easy deployment without cloning the repository.
+
+### Quick Start with Docker
+
+**Option 1: Pull and Run (Recommended for Users)**
+
+```bash
+# Pull the latest image from Docker Hub
+docker pull adambouafia/lct:latest
+
+# Run the tool
+docker run -it --rm adambouafia/lct:latest
+```
+
+**Option 2: Build from Source (For Development)**
+
+```bash
+# Clone the repository
+git clone https://github.com/adam-bouafia/LCT-LLMs-Comparative-Tool.git
+cd LCT-LLMs-Comparative-Tool
+
+# Build and run with Docker Compose
+docker-compose up
+
+# Or use the helper script
+./docker-build.sh
+./docker-run.sh
+```
+
+### Docker Features
+
+✓ **Multi-stage build**: Optimized image size with separate build and runtime stages  
+✓ **Non-root user**: Security-first approach with dedicated `lct` user (uid 1000)  
+✓ **GPU support**: Optional NVIDIA GPU access for accelerated inference  
+✓ **Energy profiling**: Privileged mode for RAPL hardware counter access  
+✓ **Persistent volumes**: Automatic caching of models, datasets, and results  
+✓ **Interactive mode**: Full CLI functionality in containerized environment  
+✓ **Health checks**: Built-in container health monitoring  
+
+### Installation Options
+
+#### Option 1: Docker Compose (Recommended)
+
+```bash
+# Start the container
+docker-compose up
+
+# Run in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the container
+docker-compose down
+```
+
+#### Option 2: Direct Docker Run
+
+```bash
+# Build the image
+docker build -t lct:latest .
+
+# Run with basic settings
+docker run -it --rm lct:latest
+
+# Run with volume mounts for persistence
+docker run -it --rm \
+  -v $(pwd)/experiments:/app/experiments \
+  -v $(pwd)/saved_configs:/app/saved_configs \
+  lct:latest
+```
+
+#### Option 3: Helper Scripts
+
+```bash
+# Build the image
+./docker-build.sh
+
+# Run with default settings
+./docker-run.sh
+
+# Run with GPU support
+./docker-run.sh --gpu
+
+# Run with energy profiling (privileged mode)
+./docker-run.sh --privileged
+
+# Open a shell in the container
+./docker-shell.sh
+```
+
+### GPU Support
+
+To enable GPU support for accelerated inference:
+
+**Prerequisites:**
+- NVIDIA GPU with CUDA support
+- NVIDIA Container Toolkit installed on host
+
+**Enable in docker-compose.yml:**
+```yaml
+services:
+  lct:
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+```
+
+**Or run with script:**
+```bash
+./docker-run.sh --gpu
+```
+
+### Volume Mounts
+
+The Docker setup uses several volumes for data persistence:
+
+| Volume | Purpose | Type |
+|--------|---------|------|
+| `huggingface_cache` | HuggingFace models & datasets | Named volume |
+| `models_cache` | PyTorch models | Named volume |
+| `./experiments` | Experiment results | Bind mount |
+| `./saved_configs` | Configuration files | Bind mount |
+| `./logs` | Application logs | Bind mount |
+
+**Benefits:**
+- Models downloaded once, persist across container restarts
+- Experiment results saved to host filesystem
+- Easy access to configuration files from host
+
+### Environment Variables
+
+Configure LCT behavior with environment variables:
+
+```bash
+# HuggingFace configuration
+HF_HOME=/data/huggingface                    # Cache directory
+HF_TOKEN=hf_your_token_here                  # Optional: for private models
+TRANSFORMERS_CACHE=/data/huggingface/transformers
+HF_DATASETS_CACHE=/data/huggingface/datasets
+
+# PyTorch configuration
+TORCH_HOME=/data/models
+
+# Python configuration
+PYTHONUNBUFFERED=1                           # Real-time output
+```
+
+Create a `.env` file in the project root for custom configuration:
+
+```bash
+# .env
+HF_TOKEN=hf_your_token_here
+CUDA_VISIBLE_DEVICES=0
+```
+
+### Energy Profiling in Docker
+
+Energy profiling requires access to hardware counters:
+
+**Option 1: Privileged Mode (Full Access)**
+```bash
+docker run -it --rm --privileged lct:latest
+```
+
+**Option 2: Selective Capabilities (More Secure)**
+```bash
+docker run -it --rm \
+  --cap-add=SYS_ADMIN \
+  --device=/dev/cpu/0/msr:/dev/cpu/0/msr \
+  lct:latest
+```
+
+**Note:** Energy profiling may have limited functionality in containerized environments. For full RAPL access, consider running on bare metal or with privileged mode.
+
+### Troubleshooting
+
+**Container won't start:**
+```bash
+# Check Docker service
+sudo systemctl status docker
+
+# View container logs
+docker logs lct-tool
+
+# Check image build
+docker images | grep lct
+```
+
+**Permission issues:**
+```bash
+# Ensure scripts are executable
+chmod +x docker-*.sh
+
+# Check volume permissions
+ls -la experiments/ saved_configs/
+```
+
+**GPU not detected:**
+```bash
+# Verify NVIDIA runtime
+docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
+
+# Check NVIDIA Container Toolkit
+nvidia-ctk --version
+```
+
+**Out of disk space:**
+```bash
+# Clean up Docker resources
+docker system prune -a
+
+# Remove unused volumes
+docker volume prune
+
+# Check volume sizes
+docker system df
+```
+
+## �🔋 Energy Profiling & Environmental Impact
 
 **CodeCarbon + Environmental Tracking** - Production-ready comprehensive measurement with global environmental impact analysis:
 
@@ -271,6 +493,7 @@ Example: 1M queries/day for 1 year
 
 ## 📁 Project Structure
 
+```text
 ├── 📋 README.md                       # Project documentation
 ├── ⚖️  LICENSE                         # License file
 ├── 📄 CITATION.cff                    # Citation information
@@ -297,6 +520,7 @@ Example: 1M queries/day for 1 year
 │   └── README.md                     # Data directory info
 ├── 🧪 experiments/                    # Experiment results
 └── 🔋 .venv/                         # Virtual environment (gitignored)
+```
 
 ## 🛠️ Usage
 
@@ -465,7 +689,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Add tests if applicable
 5. Submit a pull request
 
-## �‍💻 Developer Information
+## 💻 Developer Information
 
 ### Developed by Adam Bouafia
 
@@ -483,7 +707,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 *Your donations and support help maintain and improve this tool for the research community!*
 
-## �📄 License
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 

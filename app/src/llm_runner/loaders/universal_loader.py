@@ -4,20 +4,33 @@ This module provides functionality to load, manage, and interact with
 various Hugging Face models in a memory-efficient way.
 """
 
+import importlib.util
 import logging
 import gc
 import os
+import math
 import time
 import threading
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass
 import psutil
 import torch
 from transformers import (
     AutoTokenizer, AutoModelForCausalLM, AutoModelForSeq2SeqLM,
-    AutoConfig, pipeline, Pipeline
+    AutoConfig, pipeline, Pipeline, LlamaTokenizer
 )
 from transformers.utils.import_utils import is_torch_available  # type: ignore[attr-defined]
+
+try:
+    from transformers.models.mamba import MambaForCausalLM  # type: ignore[attr-defined]
+except (ImportError, AttributeError):  # pragma: no cover - optional dependency
+    MambaForCausalLM = None  # type: ignore[assignment]
+
+try:
+    from transformers.models.rwkv import RWKVForCausalLM  # type: ignore[attr-defined]
+except (ImportError, AttributeError):  # pragma: no cover - optional dependency
+    RWKVForCausalLM = None  # type: ignore[assignment]
+
 
 try:
     from ...core.data_manager import get_data_manager
@@ -36,6 +49,16 @@ class ModelLoadConfig:
     max_memory_per_model_gb: Optional[float] = None
     offload_folder: Optional[str] = None
     low_cpu_mem_usage: bool = True
+    device_map: Optional[Union[str, Dict[str, str]]] = None
+    enable_cpu_offload: bool = False
+    max_cpu_memory_gb: Optional[float] = None
+    kv_cache_offload: bool = False
+    quantization_mode: Optional[str] = None  # e.g. "4bit" or "8bit"
+    bnb_compute_dtype: Optional[str] = None
+    bnb_double_quant: bool = True
+    bnb_quant_type: str = "nf4"
+    enable_flash_attention: bool = False
+    compile_model: bool = False
 
 @dataclass 
 class LoadedModel:
@@ -288,8 +311,6 @@ class UniversalModelLoader:
                     print(f"   ⚠️  Fast tokenizer conversion failed, using legacy slow tokenizer...")
                     # Try with legacy=True to bypass fast tokenizer conversion issues
                     try:
-                        from transformers import LlamaTokenizer, AutoTokenizer
-                        
                         # First, try LlamaTokenizer directly for LLaMA-based models
                         if 'llama' in model_id.lower() or 'eagle' in model_id.lower():
                             print(f"   🔧 Trying LlamaTokenizer directly...")
@@ -316,7 +337,7 @@ class UniversalModelLoader:
             model_class = self._get_model_class(metadata)
             print(f"   🏗️  Trying model class: {model_class.__name__}")
             
-            # Set up loading parameters
+            # Set up loading parameters with advanced configuration
             model_kwargs: Dict[str, Any] = {
                 'trust_remote_code': self.config.trust_remote_code,
                 'low_cpu_mem_usage': self.config.low_cpu_mem_usage,
@@ -333,37 +354,106 @@ class UniversalModelLoader:
             
             # Handle torch_dtype
             if self.config.torch_dtype and self.config.torch_dtype != "auto":
-                torch_dtype = getattr(torch, self.config.torch_dtype)
-                model_kwargs['torch_dtype'] = torch_dtype
-                print(f"   🎯 Torch dtype: {self.config.torch_dtype}")
+                if hasattr(torch, self.config.torch_dtype):
+                    torch_dtype = getattr(torch, self.config.torch_dtype)
+                    model_kwargs['torch_dtype'] = torch_dtype
+                    print(f"   🎯 Torch dtype: {self.config.torch_dtype}")
+                else:
+                    logger.warning(f"Unknown torch dtype '{self.config.torch_dtype}', defaulting to auto")
+                    print(f"   🎯 Torch dtype: auto (invalid override ignored)")
             else:
                 print(f"   🎯 Torch dtype: auto")
-            
-            # Load model with fallback
-            model = None
-            print(f"   📦 Loading model weights (this may take a while for first download)...")
-            
-            try:
-                model = model_class.from_pretrained(model_id, **model_kwargs)
-                print(f"   ✅ Model weights loaded successfully with {model_class.__name__}!")
-            except Exception as e:
-                print(f"   ⚠️  Failed with {model_class.__name__}: {e}")
-                # Try alternative model class
-                alternative_class = AutoModelForCausalLM if model_class == AutoModelForSeq2SeqLM else AutoModelForSeq2SeqLM
-                print(f"   🔄 Trying fallback: {alternative_class.__name__}")
+
+            # Device mapping and offloading configuration
+            if self.config.device_map:
+                model_kwargs['device_map'] = self.config.device_map  # type: ignore[assignment]
+                print(f"   �️  Using custom device map")
+            elif self.config.enable_cpu_offload:
+                model_kwargs['device_map'] = 'auto'
+                print(f"   🗺️  Enabling automatic device map for CPU offload")
+
+            if self.config.enable_cpu_offload:
+                max_memory: Dict[Any, str] = {}
+                if torch.cuda.is_available():
+                    for idx in range(torch.cuda.device_count()):
+                        props = torch.cuda.get_device_properties(idx)
+                        total_gb = int(math.floor(props.total_memory / (1024 ** 3)))
+                        max_memory[f"cuda:{idx}"] = f"{total_gb}GiB"
+                cpu_cap_gb = self.config.max_cpu_memory_gb or max(4, int(psutil.virtual_memory().available / (1024 ** 3) * 0.9))
+                max_memory['cpu'] = f"{int(cpu_cap_gb)}GiB"
+                model_kwargs['max_memory'] = max_memory  # type: ignore[assignment]
+                if self.config.offload_folder:
+                    model_kwargs['offload_folder'] = self.config.offload_folder
+                    print(f"   🗄️  Offloading weights to: {self.config.offload_folder}")
+                if self.config.kv_cache_offload and self.config.offload_folder:
+                    model_kwargs['offload_state_dict'] = True
+                    print(f"   🧠 KV-cache offload enabled")
+
+            # Quantization support (bitsandbytes)
+            if self.config.quantization_mode:
+                quant_mode = self.config.quantization_mode.lower()
                 try:
-                    model = alternative_class.from_pretrained(model_id, **model_kwargs)
-                    print(f"   ✅ Model weights loaded successfully with {alternative_class.__name__}!")
-                    model_class = alternative_class  # Update for pipeline creation
-                except Exception as e2:
-                    print(f"   ❌ Both model classes failed!")
-                    print(f"      - {model_class.__name__}: {e}")
-                    print(f"      - {alternative_class.__name__}: {e2}")
-                    raise RuntimeError(f"Failed to load {model_id} with either model class")
+                    if importlib.util.find_spec("bitsandbytes") is None:
+                        raise ImportError("bitsandbytes not installed")
+
+                    if quant_mode == '8bit':
+                        model_kwargs['load_in_8bit'] = True
+                        print(f"   🪄 Loading model in 8-bit precision")
+                    elif quant_mode == '4bit':
+                        model_kwargs['load_in_4bit'] = True
+                        compute_dtype_str = self.config.bnb_compute_dtype or 'float16'
+                        if hasattr(torch, compute_dtype_str):
+                            model_kwargs['bnb_4bit_compute_dtype'] = getattr(torch, compute_dtype_str)
+                        else:
+                            logger.warning(f"Unknown compute dtype '{compute_dtype_str}', defaulting to float16")
+                            model_kwargs['bnb_4bit_compute_dtype'] = torch.float16
+                        model_kwargs['bnb_4bit_use_double_quant'] = self.config.bnb_double_quant
+                        model_kwargs['bnb_4bit_quant_type'] = self.config.bnb_quant_type
+                        print(f"   🪄 Loading model in 4-bit precision (quant type: {self.config.bnb_quant_type})")
+                    else:
+                        logger.warning(f"Unsupported quantization mode '{self.config.quantization_mode}'")
+                except ImportError:
+                    logger.warning("bitsandbytes not installed; skipping quantization mode")
+                    print(f"   ⚠️  bitsandbytes not installed, skipping quantization mode")
+
+            if self.config.enable_flash_attention:
+                model_kwargs['attn_implementation'] = 'flash_attention_2'
+                print(f"   ⚡ Flash Attention enabled")
+
+            # Load model with extended fallback strategy
+            model = None
+            print(f"   � Loading model weights (this may take a while for first download)...")
+            load_errors: List[Tuple[str, Exception]] = []
+
+            for candidate_class in self._iterate_candidate_model_classes(model_class):
+                class_name = candidate_class.__name__
+                try:
+                    model = candidate_class.from_pretrained(model_id, **model_kwargs)
+                    print(f"   ✅ Model weights loaded successfully with {class_name}!")
+                    model_class = candidate_class
+                    break
+                except Exception as candidate_error:
+                    load_errors.append((class_name, candidate_error))
+                    print(f"   ⚠️  Failed with {class_name}: {candidate_error}")
+                    continue
+
+            if model is None:
+                print(f"   ❌ All model class attempts failed")
+                for class_name, err in load_errors:
+                    print(f"      - {class_name}: {err}")
+                raise RuntimeError(f"Failed to load {model_id} with available model classes")
             
             # Move to device
             print(f"   🚚 Moving model to device: {self.device}")
             model = model.to(self.device)  # type: ignore[arg-type]
+
+            if self.config.compile_model and hasattr(torch, "compile"):
+                try:
+                    print(f"   🧩 Compiling model with torch.compile for faster inference")
+                    model = torch.compile(model)  # type: ignore[attr-defined]
+                except Exception as compile_error:
+                    logger.warning(f"torch.compile failed, continuing with eager mode: {compile_error}")
+                    print(f"   ⚠️  torch.compile failed, continuing without compilation")
             
             # Set up pipeline if possible
             pipeline_obj = None
@@ -373,7 +463,7 @@ class UniversalModelLoader:
                 if pipeline_task:
                     pipeline_obj = pipeline(  # type: ignore[call-overload]
                         pipeline_task,  # type: ignore[arg-type]
-                        model=model,
+                        model=model,  # type: ignore[arg-type]
                         tokenizer=tokenizer,
                         device=0 if self.device == "cuda" else -1,
                         trust_remote_code=self.config.trust_remote_code
@@ -762,6 +852,10 @@ class UniversalModelLoader:
             # Chat/instruct models
             'chat', 'instruct', 'tulu', 'oasst'
         ]
+
+        state_space_patterns = [
+            'mamba', 'state-spaces', 'rwkv'
+        ]
         
         # Check model ID patterns first (most reliable)
         if model_id:
@@ -773,6 +867,18 @@ class UniversalModelLoader:
                     print(f"   🔍 Detected seq2seq model (pattern: {pattern})")
                     return AutoModelForSeq2SeqLM
             
+            # Check for state-space models (Mamba/RWKV)
+            for pattern in state_space_patterns:
+                if pattern in model_lower:
+                    if 'mamba' in pattern and MambaForCausalLM is not None:
+                        print(f"   🔍 Detected Mamba model (pattern: {pattern})")
+                        return MambaForCausalLM  # type: ignore[return-value]
+                    if 'rwkv' in pattern and RWKVForCausalLM is not None:
+                        print(f"   🔍 Detected RWKV model (pattern: {pattern})")
+                        return RWKVForCausalLM  # type: ignore[return-value]
+                    print(f"   🔍 Detected state-space model, defaulting to causal LM loader")
+                    return AutoModelForCausalLM
+
             # Check for causal LM patterns  
             for pattern in causal_patterns:
                 if pattern in model_lower:
@@ -809,6 +915,8 @@ class UniversalModelLoader:
                     'llama', 'mistral', 'gemma', 'qwen', 'gpt', 'gptneo', 'gptj', 
                     'opt', 'bloom', 'falcon', 'phi', 'yi'
                 ]
+
+                state_space_archs = ['mamba', 'rwkv']
                 
                 for arch in seq2seq_archs:
                     if arch in arch_lower:
@@ -819,6 +927,17 @@ class UniversalModelLoader:
                 for arch in causal_archs:
                     if arch in arch_lower:
                         print(f"   🔍 Detected causal LM model (architecture: {arch_name})")
+                        return AutoModelForCausalLM
+
+                for arch in state_space_archs:
+                    if arch in arch_lower:
+                        if arch == 'mamba' and MambaForCausalLM is not None:
+                            print(f"   🔍 Detected Mamba architecture: {arch_name}")
+                            return MambaForCausalLM  # type: ignore[return-value]
+                        if arch == 'rwkv' and RWKVForCausalLM is not None:
+                            print(f"   🔍 Detected RWKV architecture: {arch_name}")
+                            return RWKVForCausalLM  # type: ignore[return-value]
+                        print(f"   🔍 Detected state-space architecture, defaulting to causal LM")
                         return AutoModelForCausalLM
             
             # Check model type
@@ -833,12 +952,23 @@ class UniversalModelLoader:
                     'llama', 'mistral', 'gemma', 'qwen', 'qwen2', 'gpt2', 'gpt_neo', 'gptj',
                     'opt', 'bloom', 'falcon', 'RefinedWebModel', 'phi', 'phi3', 'yi'  
                 ]
+
+                state_space_types = ['mamba', 'rwkv']
                 
                 if model_type in seq2seq_types:
                     print(f"   🔍 Detected seq2seq model (model_type: {model_type})")
                     return AutoModelForSeq2SeqLM
                 elif model_type in causal_types:
                     print(f"   🔍 Detected causal LM model (model_type: {model_type})")
+                    return AutoModelForCausalLM
+                elif model_type in state_space_types:
+                    if model_type == 'mamba' and MambaForCausalLM is not None:
+                        print(f"   🔍 Detected Mamba model (model_type: {model_type})")
+                        return MambaForCausalLM  # type: ignore[return-value]
+                    if model_type == 'rwkv' and RWKVForCausalLM is not None:
+                        print(f"   🔍 Detected RWKV model (model_type: {model_type})")
+                        return RWKVForCausalLM  # type: ignore[return-value]
+                    print(f"   🔍 Detected state-space model (model_type: {model_type}), defaulting to causal LM")
                     return AutoModelForCausalLM
                 else:
                     # Unknown model type - try seq2seq first as it's more specific
@@ -852,6 +982,41 @@ class UniversalModelLoader:
         # (Most failures happen when trying causal LM on seq2seq models)
         print("   🔍 Unknown model type - will try both classes with fallback")
         return AutoModelForSeq2SeqLM
+
+    def _iterate_candidate_model_classes(self, primary_class):
+        """Yield primary and fallback model classes without duplicates."""
+        seen = set()
+        for candidate in [primary_class, *self._get_fallback_model_classes(primary_class)]:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+
+    def _get_fallback_model_classes(self, primary_class):
+        """Return an ordered list of fallback model classes based on the primary selection."""
+        fallbacks: List[Any] = []
+
+        # Prefer matching architecture-specific classes first
+        if primary_class not in {AutoModelForCausalLM, AutoModelForSeq2SeqLM}:
+            fallbacks.extend([AutoModelForCausalLM, AutoModelForSeq2SeqLM])
+        elif primary_class == AutoModelForSeq2SeqLM:
+            fallbacks.append(AutoModelForCausalLM)
+        else:
+            fallbacks.append(AutoModelForSeq2SeqLM)
+
+        # Always provide a generic auto loader as a last resort
+        if primary_class is not AutoModelForCausalLM:
+            fallbacks.append(AutoModelForCausalLM)
+        if primary_class is not AutoModelForSeq2SeqLM:
+            fallbacks.append(AutoModelForSeq2SeqLM)
+
+        # Remove duplicates while preserving order
+        ordered_unique: List[Any] = []
+        seen = set()
+        for fb in fallbacks:
+            if fb not in seen:
+                ordered_unique.append(fb)
+                seen.add(fb)
+        return ordered_unique
     
     def _get_pipeline_task(self, metadata) -> Optional[str]:
         """Get the pipeline task for the model with comprehensive detection."""
@@ -900,15 +1065,23 @@ class UniversalModelLoader:
         """Calculate model memory usage in MB."""
         try:
             # Try to get actual GPU memory if using CUDA
-            if self.device == "cuda" and torch.cuda.is_available():
+            if self.device.startswith("cuda") and torch.cuda.is_available():
                 torch.cuda.synchronize()
-                memory_mb = torch.cuda.memory_allocated() / (1024 ** 2)
-                return memory_mb
+                allocated = torch.cuda.memory_allocated() / (1024 ** 2)
+                if allocated > 0:
+                    return allocated
             
-            # Estimate based on parameter count
-            total_params = sum(p.numel() for p in model.parameters())
-            # Assume 4 bytes per parameter (float32)
-            memory_mb = (total_params * 4) / (1024 ** 2)
+            # Estimate based on parameter and buffer sizes
+            total_bytes = 0
+            for param in model.parameters():
+                total_bytes += param.numel() * param.element_size()
+            for buffer in model.buffers():
+                total_bytes += buffer.numel() * buffer.element_size()
+
+            memory_mb = total_bytes / (1024 ** 2)
+            if memory_mb == 0:
+                # Fallback estimation
+                return 500.0  # 500MB default
             return memory_mb
             
         except Exception:

@@ -315,6 +315,14 @@ class InteractiveLCT:
         self.console.print(panel)
         self.console.print()
     
+    def _format_size(self, size_bytes):
+        """Format size in bytes to human-readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} PB"
+    
     def _get_energy_status(self):
         """Get energy profiling status for main menu display"""
         profiler = self.config.get("energy_profiler", "none")
@@ -396,10 +404,11 @@ class InteractiveLCT:
                     "🚀 Run Experiment",
                     "🚀" if self.is_config_complete() else "⚪",
                 ),
-                # Results management
+                # Results and maintenance
                 ("14", "🔍 Results Explorer", "📊"),
+                ("15", "🧹 Project Cleanup", "🗑️"),
                 # Information and exit
-                ("15", "ℹ️  About Tool", "📋"),
+                ("16", "ℹ️  About Tool", "📋"),
                 ("0", "🚪 Exit", "🚪"),
             ]
 
@@ -410,7 +419,7 @@ class InteractiveLCT:
             self.console.print()
 
             choice = Prompt.ask(
-                "Choose an option", choices=["0"] + [str(i) for i in range(1, 16)]
+                "Choose an option", choices=["0"] + [str(i) for i in range(1, 17)]
             )
 
             if choice == "1":
@@ -448,6 +457,8 @@ class InteractiveLCT:
             elif choice == "14":
                 self.launch_results_explorer()
             elif choice == "15":
+                self.project_cleanup()
+            elif choice == "16":
                 self.show_about()
             elif choice == "0":
                 if Confirm.ask("Are you sure you want to exit?"):
@@ -4282,6 +4293,271 @@ except Exception as e:
                 f"[red]❌ Error launching Results Explorer: {str(e)}[/red]"
             )
 
+        input("\nPress Enter to continue...")
+
+    def project_cleanup(self):
+        """Interactive project cleanup with multi-select options"""
+        self.console.clear()
+        self.console.print("[bold blue]🧹 Project Cleanup[/bold blue]\n")
+        
+        # Calculate sizes for different cleanup categories
+        cleanup_items = []
+        
+        # 1. Python cache
+        try:
+            pycache_size = sum(
+                f.stat().st_size
+                for f in Path(".").rglob("__pycache__")
+                if f.is_dir()
+                for f in f.rglob("*")
+                if f.is_file()
+            )
+            pycache_count = len(list(Path(".").rglob("__pycache__")))
+            cleanup_items.append({
+                "id": "pycache",
+                "name": "Python cache (__pycache__)",
+                "size": pycache_size,
+                "count": f"{pycache_count} directories",
+                "description": "Compiled Python bytecode files"
+            })
+        except Exception:
+            pass
+        
+        # 2. Experiment backups
+        try:
+            backup_paths = list(Path("experiments").rglob("*backup*"))
+            backup_size = sum(
+                sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                for p in backup_paths if p.is_dir()
+            )
+            cleanup_items.append({
+                "id": "backups",
+                "name": "Experiment backups",
+                "size": backup_size,
+                "count": f"{len(backup_paths)} folders",
+                "description": "Old experiment backup folders"
+            })
+        except Exception:
+            pass
+        
+        # 3. Redundant RunnerConfig files
+        try:
+            runner_configs = list(Path("experiments").rglob("RunnerConfig.py"))
+            runner_configs = [f for f in runner_configs if f.parent != Path("experiments")]
+            config_size = sum(f.stat().st_size for f in runner_configs)
+            cleanup_items.append({
+                "id": "configs",
+                "name": "Old experiment configs",
+                "size": config_size,
+                "count": f"{len(runner_configs)} files",
+                "description": "Replaced by saved_configs/ JSON files"
+            })
+        except Exception:
+            pass
+        
+        # 4. Downloaded models (HuggingFace cache)
+        try:
+            hf_cache = Path("data/huggingface")
+            if hf_cache.exists():
+                hf_size = sum(f.stat().st_size for f in hf_cache.rglob("*") if f.is_file())
+                model_count = len(list(hf_cache.glob("hub/models--*")))
+                cleanup_items.append({
+                    "id": "models",
+                    "name": "Downloaded models",
+                    "size": hf_size,
+                    "count": f"~{model_count} models",
+                    "description": "HuggingFace model cache (will re-download on next use)",
+                    "warning": True
+                })
+        except Exception:
+            pass
+        
+        # 5. Downloaded datasets
+        try:
+            datasets_cache = Path("data/datasets")
+            if datasets_cache.exists():
+                ds_size = sum(f.stat().st_size for f in datasets_cache.rglob("*") if f.is_file())
+                ds_count = len([d for d in datasets_cache.iterdir() if d.is_dir()])
+                cleanup_items.append({
+                    "id": "datasets",
+                    "name": "Downloaded datasets",
+                    "size": ds_size,
+                    "count": f"{ds_count} datasets",
+                    "description": "Cached evaluation datasets (will re-download on next use)",
+                    "warning": True
+                })
+        except Exception:
+            pass
+        
+        # 6. Pytest cache
+        try:
+            pytest_cache = Path(".pytest_cache")
+            if pytest_cache.exists():
+                pytest_size = sum(f.stat().st_size for f in pytest_cache.rglob("*") if f.is_file())
+                cleanup_items.append({
+                    "id": "pytest",
+                    "name": "Pytest cache",
+                    "size": pytest_size,
+                    "count": "1 directory",
+                    "description": "Test execution cache"
+                })
+        except Exception:
+            pass
+        
+        # 7. Logs
+        try:
+            log_files = list(Path(".").rglob("*.log"))
+            if log_files:
+                log_size = sum(f.stat().st_size for f in log_files)
+                cleanup_items.append({
+                    "id": "logs",
+                    "name": "Log files",
+                    "size": log_size,
+                    "count": f"{len(log_files)} files",
+                    "description": "Application and experiment logs"
+                })
+        except Exception:
+            pass
+        
+        if not cleanup_items:
+            self.console.print("[green]✓ Project is already clean![/green]")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Display cleanup options
+        table = Table(show_header=True, header_style="bold cyan", box=box.ROUNDED)
+        table.add_column("ID", style="cyan", width=4)
+        table.add_column("Item", style="yellow", width=25)
+        table.add_column("Size", style="green", width=12)
+        table.add_column("Count", style="blue", width=15)
+        table.add_column("Description", style="white", width=40)
+        
+        for idx, item in enumerate(cleanup_items, 1):
+            size_str = self._format_size(item["size"])
+            warning = "⚠️ " if item.get("warning") else ""
+            table.add_row(
+                str(idx),
+                warning + item["name"],
+                size_str,
+                item["count"],
+                item["description"]
+            )
+        
+        self.console.print(table)
+        self.console.print()
+        
+        # Calculate total size
+        total_size = sum(item["size"] for item in cleanup_items)
+        self.console.print(f"[bold]Total reclaimable space: {self._format_size(total_size)}[/bold]\n")
+        
+        self.console.print("[yellow]⚠️  Items with ⚠️ will require re-downloading on next use[/yellow]")
+        self.console.print("[dim]Enter item numbers separated by commas (e.g., 1,2,3) or 'all'[/dim]")
+        self.console.print("[dim]Press 0 to cancel[/dim]\n")
+        
+        choice = Prompt.ask("Select items to clean")
+        
+        if choice == "0":
+            self.console.print("[yellow]Cleanup cancelled[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Parse selection
+        selected_ids = []
+        if choice.lower() == "all":
+            selected_ids = [item["id"] for item in cleanup_items]
+        else:
+            try:
+                indices = [int(x.strip()) for x in choice.split(",")]
+                selected_ids = [cleanup_items[i-1]["id"] for i in indices if 1 <= i <= len(cleanup_items)]
+            except (ValueError, IndexError):
+                self.console.print("[red]Invalid selection[/red]")
+                input("\nPress Enter to continue...")
+                return
+        
+        if not selected_ids:
+            self.console.print("[yellow]No items selected[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Confirm deletion
+        selected_items = [item for item in cleanup_items if item["id"] in selected_ids]
+        selected_size = sum(item["size"] for item in selected_items)
+        
+        self.console.print(f"\n[yellow]You are about to delete:[/yellow]")
+        for item in selected_items:
+            self.console.print(f"  • {item['name']} ({self._format_size(item['size'])})")
+        self.console.print(f"\n[bold]Total space to reclaim: {self._format_size(selected_size)}[/bold]\n")
+        
+        if not Confirm.ask("[red]Are you sure you want to proceed?[/red]"):
+            self.console.print("[yellow]Cleanup cancelled[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+        
+        # Perform cleanup
+        self.console.print("\n[blue]Starting cleanup...[/blue]\n")
+        import shutil
+        
+        for item_id in selected_ids:
+            try:
+                if item_id == "pycache":
+                    count = 0
+                    for pycache in Path(".").rglob("__pycache__"):
+                        if pycache.is_dir():
+                            shutil.rmtree(pycache)
+                            count += 1
+                    self.console.print(f"[green]✓ Removed {count} __pycache__ directories[/green]")
+                
+                elif item_id == "backups":
+                    count = 0
+                    for backup in Path("experiments").rglob("*backup*"):
+                        if backup.is_dir():
+                            shutil.rmtree(backup)
+                            count += 1
+                    self.console.print(f"[green]✓ Removed {count} backup folders[/green]")
+                
+                elif item_id == "configs":
+                    count = 0
+                    for config in Path("experiments").rglob("RunnerConfig.py"):
+                        if config.parent != Path("experiments"):
+                            config.unlink()
+                            count += 1
+                    # Also remove experiment_info.json files
+                    for info in Path("experiments").rglob("experiment_info.json"):
+                        if info.parent != Path("experiments"):
+                            info.unlink()
+                    self.console.print(f"[green]✓ Removed {count} old config files[/green]")
+                
+                elif item_id == "models":
+                    hf_cache = Path("data/huggingface")
+                    if hf_cache.exists():
+                        shutil.rmtree(hf_cache)
+                        hf_cache.mkdir(parents=True)
+                        self.console.print(f"[green]✓ Cleared model cache[/green]")
+                
+                elif item_id == "datasets":
+                    datasets_cache = Path("data/datasets")
+                    if datasets_cache.exists():
+                        shutil.rmtree(datasets_cache)
+                        datasets_cache.mkdir(parents=True)
+                        self.console.print(f"[green]✓ Cleared datasets cache[/green]")
+                
+                elif item_id == "pytest":
+                    pytest_cache = Path(".pytest_cache")
+                    if pytest_cache.exists():
+                        shutil.rmtree(pytest_cache)
+                        self.console.print(f"[green]✓ Removed pytest cache[/green]")
+                
+                elif item_id == "logs":
+                    count = 0
+                    for log_file in Path(".").rglob("*.log"):
+                        log_file.unlink()
+                        count += 1
+                    self.console.print(f"[green]✓ Removed {count} log files[/green]")
+                
+            except Exception as e:
+                self.console.print(f"[red]✗ Error cleaning {item_id}: {str(e)}[/red]")
+        
+        self.console.print(f"\n[bold green]✓ Cleanup completed! Reclaimed {self._format_size(selected_size)}[/bold green]")
         input("\nPress Enter to continue...")
 
     def show_about(self):

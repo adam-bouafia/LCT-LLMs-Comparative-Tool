@@ -52,9 +52,7 @@ class ConfigCreate:
         module = RunnerConfig
         src = inspect.getmodule(module).__file__
         dest_folder = destination
-        #destination += src.split('/')[-1]
         config_unique_name = 'RunnerConfig-' + str(uuid.uuid1()) + '.py'
-        # config_unique_name = 'RunnerConfig-' + 'foobar' + '.py' # FIXME: DEBUG ONLY BUILDS
         destination += config_unique_name
         copyfile(src, destination)
         output.console_log_OK(
