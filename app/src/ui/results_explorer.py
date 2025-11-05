@@ -28,7 +28,10 @@ from rich.text import Text
 class ResultsExplorer:
     def __init__(self):
         self.console = Console()
-        self.experiments_dir = Path("experiments")
+        # Use absolute path to experiments directory (3 levels up from ui/)
+        ui_dir = Path(__file__).parent.resolve()
+        project_root = ui_dir.parent.parent.parent
+        self.experiments_dir = project_root / "experiments"
 
     def show_header(self):
         """Display the tool header."""
